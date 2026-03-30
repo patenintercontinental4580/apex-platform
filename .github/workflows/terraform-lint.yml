@@ -1,0 +1,102 @@
+name: Terraform Lint
+
+on:
+  pull_request:
+    paths:
+      - "terraform/**"
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Format, Validate, TFLint & Checkov
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.0"
+
+      - name: Install TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: latest
+
+      - name: Install Checkov
+        run: pip install checkov --quiet
+
+      # -----------------------------------------------------------------------
+      # terraform fmt
+      # Fails the job if any .tf file under terraform/ is not correctly
+      # formatted. Run `terraform fmt -recursive terraform/` locally to fix.
+      # -----------------------------------------------------------------------
+      - name: terraform fmt check
+        run: terraform fmt -check -recursive terraform/
+
+      # -----------------------------------------------------------------------
+      # terraform validate
+      # Initialises each module (no backend) and validates the configuration.
+      # This catches syntax errors, missing required arguments, and type
+      # mismatches without contacting any cloud provider.
+      # -----------------------------------------------------------------------
+      - name: terraform validate (all modules)
+        run: |
+          set -euo pipefail
+
+          find terraform/modules -maxdepth 1 -mindepth 1 -type d | sort | while read -r module_dir; do
+            echo "::group::Validating ${module_dir}"
+            terraform -chdir="${module_dir}" init -backend=false -input=false -no-color
+            terraform -chdir="${module_dir}" validate -no-color
+            echo "::endgroup::"
+          done
+
+      # -----------------------------------------------------------------------
+      # terraform validate (examples)
+      # Validates the basic and complete examples for every module.
+      # -----------------------------------------------------------------------
+      - name: terraform validate (examples)
+        run: |
+          set -euo pipefail
+
+          find terraform/modules -mindepth 3 -maxdepth 3 -type d -path "*/examples/*" | sort | while read -r example_dir; do
+            echo "::group::Validating ${example_dir}"
+            terraform -chdir="${example_dir}" init -backend=false -input=false -no-color
+            terraform -chdir="${example_dir}" validate -no-color
+            echo "::endgroup::"
+          done
+
+      # -----------------------------------------------------------------------
+      # TFLint
+      # Lints the entire terraform/ directory tree for provider-specific issues,
+      # deprecated syntax, and coding-standard violations.
+      # -----------------------------------------------------------------------
+      - name: TFLint init
+        run: tflint --init
+        working-directory: terraform
+
+      - name: TFLint run
+        run: tflint --recursive --format compact
+        working-directory: terraform
+
+      # -----------------------------------------------------------------------
+      # Checkov
+      # Static analysis for security misconfigurations and policy violations
+      # across all Terraform source under terraform/.
+      # The --quiet flag suppresses passed checks; only failures are printed.
+      # -----------------------------------------------------------------------
+      - name: Checkov scan
+        run: |
+          checkov \
+            --directory terraform/ \
+            --framework terraform \
+            --quiet \
+            --compact \
+            --output cli \
+            --soft-fail-on MEDIUM
