@@ -1,0 +1,58 @@
+# Reusable step template for deploying an Azure Container App image update.
+# Parameters:
+#   containerAppName: Name of the Container App
+#   resourceGroup: Resource group containing the Container App
+#   imageName: Full image name (e.g. myacr.azurecr.io/myapp)
+#   imageTag: Tag to deploy (typically the commit SHA)
+#   azureSubscription: Azure service connection name
+parameters:
+  - name: containerAppName
+    type: string
+  - name: resourceGroup
+    type: string
+  - name: imageName
+    type: string
+  - name: imageTag
+    type: string
+  - name: azureSubscription
+    type: string
+
+steps:
+  - task: AzureCLI@2
+    displayName: 'Deploy Container App: ${{ parameters.containerAppName }}'
+    inputs:
+      azureSubscription: ${{ parameters.azureSubscription }}
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set -euo pipefail
+
+        FULL_IMAGE="${{ parameters.imageName }}:${{ parameters.imageTag }}"
+        echo "Deploying image: ${FULL_IMAGE}"
+
+        az containerapp update \
+          --name "${{ parameters.containerAppName }}" \
+          --resource-group "${{ parameters.resourceGroup }}" \
+          --image "${FULL_IMAGE}" \
+          --output table
+
+        echo "Waiting for deployment to complete..."
+        az containerapp revision list \
+          --name "${{ parameters.containerAppName }}" \
+          --resource-group "${{ parameters.resourceGroup }}" \
+          --query "[?properties.active].{Name:name,Replicas:properties.replicas,TrafficWeight:properties.trafficWeight}" \
+          --output table
+
+        # Verify the new revision is active
+        ACTIVE_IMAGE=$(az containerapp show \
+          --name "${{ parameters.containerAppName }}" \
+          --resource-group "${{ parameters.resourceGroup }}" \
+          --query "properties.template.containers[0].image" \
+          --output tsv)
+
+        if [[ "${ACTIVE_IMAGE}" == "${FULL_IMAGE}" ]]; then
+          echo "Deployment verified. Active image: ${ACTIVE_IMAGE}"
+        else
+          echo "Deployment verification failed. Expected: ${FULL_IMAGE}, Got: ${ACTIVE_IMAGE}"
+          exit 1
+        fi

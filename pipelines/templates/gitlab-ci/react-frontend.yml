@@ -1,0 +1,245 @@
+# Apex Platform: GitLab CI — React Frontend Pipeline Template
+#
+# Usage: include this file in your project's .gitlab-ci.yml and set the
+# required CI/CD variables in GitLab project settings:
+#   AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, AZURE_CLIENT_ID (OIDC)
+#   APPLICATION_NAME              e.g. my-react-app
+#   DEV_STATIC_WEB_APP_NAME      e.g. swa-my-app-dev
+#   DEV_RESOURCE_GROUP
+#   STAGING_STATIC_WEB_APP_NAME
+#   STAGING_RESOURCE_GROUP
+#   PROD_STATIC_WEB_APP_NAME
+#   PROD_RESOURCE_GROUP
+
+stages:
+  - build
+  - scan
+  - deploy-dev
+  - deploy-staging
+  - deploy-prod
+
+variables:
+  NODE_VERSION: "20"
+  BUILD_OUTPUT_PATH: "build"
+  NODE_ENV: "production"
+
+# ---------------------------------------------------------------------------
+.azure-oidc-login: &azure-oidc-login
+  - az login
+      --service-principal
+      --federated-token "$CI_JOB_JWT_V2"
+      --tenant "$AZURE_TENANT_ID"
+      --username "$AZURE_CLIENT_ID"
+      --allow-no-subscriptions
+  - az account set --subscription "$AZURE_SUBSCRIPTION_ID"
+
+# ---------------------------------------------------------------------------
+build:
+  stage: build
+  image: node:${NODE_VERSION}-slim
+  before_script:
+    - node --version
+    - npm --version
+  script:
+    - npm ci
+    - |
+      CI=true npm test -- \
+        --watchAll=false \
+        --coverage \
+        --coverageReporters=lcov \
+        --coverageReporters=cobertura \
+        --coverageReporters=text-summary \
+        --reporters=default \
+        --reporters=jest-junit
+    - npm run build
+  cache:
+    key: node-$CI_PROJECT_NAME-$NODE_VERSION
+    paths:
+      - node_modules/
+      - .npm/
+  artifacts:
+    when: always
+    reports:
+      junit: junit.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage/cobertura-coverage.xml
+    paths:
+      - $BUILD_OUTPUT_PATH/
+      - coverage/
+    expire_in: 7 days
+  environment:
+    name: build
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH =~ /^release\/.*/
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+# ---------------------------------------------------------------------------
+scan:
+  stage: scan
+  image: node:${NODE_VERSION}-slim
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq curl ca-certificates
+    - curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+  script:
+    - npm ci
+    - |
+      echo "--- npm audit (fail on high/critical) ---"
+      npm audit --audit-level=high --json > npm-audit.json || true
+      npm audit --audit-level=high
+    - |
+      echo "--- Trivy filesystem scan ---"
+      trivy fs . \
+        --exit-code 1 \
+        --severity CRITICAL,HIGH \
+        --security-checks vuln,secret \
+        --skip-dirs node_modules \
+        --format table
+  artifacts:
+    when: always
+    paths:
+      - npm-audit.json
+    expire_in: 30 days
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH =~ /^release\/.*/
+
+# ---------------------------------------------------------------------------
+deploy-dev:
+  stage: deploy-dev
+  image: mcr.microsoft.com/azure-cli:latest
+  dependencies:
+    - build
+  before_script:
+    - *azure-oidc-login
+    - az extension add --name staticwebapp --yes 2>/dev/null || true
+  script:
+    - |
+      echo "Fetching Dev SWA deployment token..."
+      DEV_TOKEN=$(az staticwebapp secrets list \
+        --name "$DEV_STATIC_WEB_APP_NAME" \
+        --query "properties.apiKey" -o tsv)
+    - |
+      echo "Installing SWA CLI..."
+      npm install -g @azure/static-web-apps-cli
+    - |
+      echo "Deploying to Dev Static Web App: $DEV_STATIC_WEB_APP_NAME"
+      swa deploy "$BUILD_OUTPUT_PATH" \
+        --deployment-token "$DEV_TOKEN" \
+        --env production \
+        --no-use-keychain
+    - |
+      DEV_HOSTNAME=$(az staticwebapp show \
+        --name "$DEV_STATIC_WEB_APP_NAME" \
+        --query defaultHostname -o tsv)
+      DEV_URL="https://${DEV_HOSTNAME}"
+      echo "Verifying dev deployment at $DEV_URL"
+      for i in $(seq 1 8); do
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$DEV_URL" || echo "000")
+        if [[ "$HTTP_CODE" == "200" ]]; then
+          echo "Dev deployment verified (attempt $i)."
+          break
+        fi
+        echo "Attempt $i: HTTP $HTTP_CODE. Waiting 15s..."
+        sleep 15
+      done
+      if [[ "$HTTP_CODE" != "200" ]]; then
+        echo "Dev deployment verification failed. HTTP: $HTTP_CODE"
+        exit 1
+      fi
+  environment:
+    name: dev
+    url: https://$DEV_STATIC_WEB_APP_NAME.azurestaticapps.net
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# ---------------------------------------------------------------------------
+deploy-staging:
+  stage: deploy-staging
+  image: mcr.microsoft.com/azure-cli:latest
+  dependencies:
+    - build
+  before_script:
+    - *azure-oidc-login
+    - az extension add --name staticwebapp --yes 2>/dev/null || true
+  script:
+    - |
+      echo "Fetching Staging SWA deployment token..."
+      STAGING_TOKEN=$(az staticwebapp secrets list \
+        --name "$STAGING_STATIC_WEB_APP_NAME" \
+        --query "properties.apiKey" -o tsv)
+    - |
+      npm install -g @azure/static-web-apps-cli
+    - |
+      echo "Deploying to Staging Static Web App: $STAGING_STATIC_WEB_APP_NAME"
+      swa deploy "$BUILD_OUTPUT_PATH" \
+        --deployment-token "$STAGING_TOKEN" \
+        --env production \
+        --no-use-keychain
+    - |
+      STAGING_HOSTNAME=$(az staticwebapp show \
+        --name "$STAGING_STATIC_WEB_APP_NAME" \
+        --query defaultHostname -o tsv)
+      STAGING_URL="https://${STAGING_HOSTNAME}"
+      echo "Running integration smoke test against $STAGING_URL"
+      for i in $(seq 1 8); do
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$STAGING_URL" || echo "000")
+        if [[ "$HTTP_CODE" == "200" ]]; then
+          echo "Staging smoke test passed (attempt $i)."
+          break
+        fi
+        echo "Attempt $i: HTTP $HTTP_CODE. Waiting 15s..."
+        sleep 15
+      done
+      if [[ "$HTTP_CODE" != "200" ]]; then
+        echo "Staging smoke test failed. HTTP: $HTTP_CODE"
+        exit 1
+      fi
+  environment:
+    name: staging
+    url: https://$STAGING_STATIC_WEB_APP_NAME.azurestaticapps.net
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# ---------------------------------------------------------------------------
+deploy-prod:
+  stage: deploy-prod
+  image: mcr.microsoft.com/azure-cli:latest
+  dependencies:
+    - build
+  before_script:
+    - *azure-oidc-login
+    - az extension add --name staticwebapp --yes 2>/dev/null || true
+  script:
+    - |
+      echo "Fetching Production SWA deployment token..."
+      PROD_TOKEN=$(az staticwebapp secrets list \
+        --name "$PROD_STATIC_WEB_APP_NAME" \
+        --query "properties.apiKey" -o tsv)
+    - |
+      npm install -g @azure/static-web-apps-cli
+    - |
+      echo "Deploying to Production Static Web App: $PROD_STATIC_WEB_APP_NAME"
+      swa deploy "$BUILD_OUTPUT_PATH" \
+        --deployment-token "$PROD_TOKEN" \
+        --env production \
+        --no-use-keychain
+    - |
+      PROD_HOSTNAME=$(az staticwebapp show \
+        --name "$PROD_STATIC_WEB_APP_NAME" \
+        --query defaultHostname -o tsv)
+      PROD_URL="https://${PROD_HOSTNAME}"
+      HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$PROD_URL" || echo "000")
+      if [[ "$HTTP_CODE" != "200" ]]; then
+        echo "Production health check failed. HTTP: $HTTP_CODE"
+        exit 1
+      fi
+      echo "Production deployment verified. App is live at $PROD_URL"
+  environment:
+    name: production
+    url: https://$PROD_STATIC_WEB_APP_NAME.azurestaticapps.net
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
+      allow_failure: false

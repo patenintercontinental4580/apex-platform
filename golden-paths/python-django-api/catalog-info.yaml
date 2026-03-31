@@ -1,0 +1,22 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: ${{ values.serviceName }}
+  description: ${{ values.description }}
+  annotations:
+    dev.azure.com/project-repo: apex-platform/${{ values.serviceName }}
+    backstage.io/techdocs-ref: dir:.
+  tags:
+    - python
+    - django
+    - azure-app-service
+  links:
+    - url: https://portal.azure.com
+      title: Azure Portal
+      icon: cloud
+spec:
+  type: service
+  lifecycle: production
+  owner: ${{ values.owningTeam }}
+  system: ${{ values.system | default("order-management") }}
+  dependsOn: []

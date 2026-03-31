@@ -1,0 +1,37 @@
+{
+  "properties": {
+    "displayName": "Require mandatory resource tags",
+    "description": "Denies the creation or update of resources that are missing the mandatory tags: CostCentre, Team, and Environment.",
+    "mode": "Indexed",
+    "metadata": {
+      "version": "1.0.0",
+      "category": "Tags"
+    },
+    "parameters": {
+      "effect": {
+        "type": "String",
+        "metadata": {
+          "displayName": "Effect",
+          "description": "The effect determines what happens when the policy rule is evaluated to match."
+        },
+        "allowedValues": ["Deny", "Audit", "Disabled"],
+        "defaultValue": "Deny"
+      }
+    },
+    "policyRule": {
+      "if": {
+        "anyOf": [
+          { "field": "tags['CostCentre']", "exists": "false" },
+          { "field": "tags['CostCentre']", "equals": "" },
+          { "field": "tags['Team']", "exists": "false" },
+          { "field": "tags['Team']", "equals": "" },
+          { "field": "tags['Environment']", "exists": "false" },
+          { "field": "tags['Environment']", "notIn": ["dev", "staging", "prod"] }
+        ]
+      },
+      "then": {
+        "effect": "[parameters('effect')]"
+      }
+    }
+  }
+}

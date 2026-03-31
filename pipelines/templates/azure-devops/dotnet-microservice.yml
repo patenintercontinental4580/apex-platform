@@ -1,0 +1,332 @@
+# Apex Platform: .NET Microservice Pipeline Template
+# Extends this template from your team pipeline with:
+#   resources:
+#     repositories:
+#       - repository: templates
+#         type: git
+#         name: apex-platform/apex-platform
+#   extends:
+#     template: pipelines/templates/azure-devops/dotnet-microservice.yml@templates
+#     parameters:
+#       applicationName: my-service
+#       containerRegistry: myacr.azurecr.io
+#       azureSubscription: my-azure-service-connection
+
+parameters:
+  - name: applicationName
+    type: string
+  - name: dotnetVersion
+    type: string
+    default: '8.0.x'
+  - name: containerRegistry
+    type: string
+  - name: containerRegistryServiceConnection
+    type: string
+  - name: azureSubscription
+    type: string
+  - name: devContainerAppName
+    type: string
+    default: ''
+  - name: devResourceGroup
+    type: string
+    default: ''
+  - name: stagingContainerAppName
+    type: string
+    default: ''
+  - name: stagingResourceGroup
+    type: string
+    default: ''
+  - name: prodContainerAppName
+    type: string
+    default: ''
+  - name: prodResourceGroup
+    type: string
+    default: ''
+  - name: sonarQubeServiceConnection
+    type: string
+    default: 'SonarQube'
+  - name: sonarProjectKey
+    type: string
+    default: ''
+
+trigger:
+  branches:
+    include:
+      - main
+      - 'release/*'
+
+stages:
+  # ---------------------------------------------------------------------------
+  - stage: Build
+    displayName: 'Build & Package'
+    jobs:
+      - job: BuildAndTest
+        displayName: 'Build, Test & Push'
+        pool:
+          vmImage: ubuntu-latest
+        variables:
+          IMAGE_TAG: $(Build.SourceVersion)
+          FULL_IMAGE: ${{ parameters.containerRegistry }}/${{ parameters.applicationName }}
+        steps:
+          - checkout: self
+            fetchDepth: 0  # Full history required for SonarQube
+
+          - task: UseDotNet@2
+            displayName: 'Use .NET ${{ parameters.dotnetVersion }}'
+            inputs:
+              version: ${{ parameters.dotnetVersion }}
+
+          - task: DotNetCoreCLI@2
+            displayName: 'dotnet restore'
+            inputs:
+              command: restore
+              projects: '**/*.csproj'
+
+          - task: DotNetCoreCLI@2
+            displayName: 'dotnet build'
+            inputs:
+              command: build
+              projects: '**/*.csproj'
+              arguments: '--configuration Release --no-restore'
+
+          - task: DotNetCoreCLI@2
+            displayName: 'dotnet test'
+            inputs:
+              command: test
+              projects: '**/*.Tests.csproj'
+              arguments: >
+                --configuration Release
+                --no-build
+                --logger trx
+                --results-directory $(Agent.TempDirectory)/TestResults
+                --collect:"XPlat Code Coverage"
+                /p:CoverletOutputFormat=opencover
+              publishWebProjects: false
+
+          - task: PublishTestResults@2
+            displayName: 'Publish unit test results'
+            condition: always()
+            inputs:
+              testResultsFormat: VSTest
+              testResultsFiles: '$(Agent.TempDirectory)/TestResults/*.trx'
+              failTaskOnFailedTests: true
+              testRunTitle: 'Unit Tests — ${{ parameters.applicationName }}'
+
+          - task: PublishCodeCoverageResults@1
+            displayName: 'Publish code coverage'
+            inputs:
+              codeCoverageTool: Cobertura
+              summaryFileLocation: '$(Agent.TempDirectory)/TestResults/**/coverage.cobertura.xml'
+
+          - task: Docker@2
+            displayName: 'Docker build'
+            inputs:
+              command: build
+              containerRegistry: ${{ parameters.containerRegistryServiceConnection }}
+              repository: ${{ parameters.applicationName }}
+              dockerfile: '**/Dockerfile'
+              tags: |
+                $(IMAGE_TAG)
+                latest
+
+          - task: Docker@2
+            displayName: 'Docker push'
+            condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+            inputs:
+              command: push
+              containerRegistry: ${{ parameters.containerRegistryServiceConnection }}
+              repository: ${{ parameters.applicationName }}
+              tags: |
+                $(IMAGE_TAG)
+                latest
+
+  # ---------------------------------------------------------------------------
+  - stage: Scan
+    displayName: 'Security Scan'
+    dependsOn: Build
+    jobs:
+      - job: SecurityScans
+        displayName: 'Trivy + SonarQube + Dependency Check'
+        pool:
+          vmImage: ubuntu-latest
+        variables:
+          FULL_IMAGE: ${{ parameters.containerRegistry }}/${{ parameters.applicationName }}:$(Build.SourceVersion)
+        steps:
+          - checkout: self
+            fetchDepth: 0
+
+          - script: |
+              curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+            displayName: 'Install Trivy'
+
+          - task: AzureCLI@2
+            displayName: 'Authenticate to Container Registry'
+            inputs:
+              azureSubscription: ${{ parameters.azureSubscription }}
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az acr login --name $(echo "${{ parameters.containerRegistry }}" | cut -d. -f1)
+
+          - script: |
+              trivy image \
+                --exit-code 1 \
+                --severity CRITICAL,HIGH \
+                --format table \
+                --ignore-unfixed \
+                "$(FULL_IMAGE)"
+            displayName: 'Trivy container image scan'
+
+          - task: SonarQubePrepare@5
+            displayName: 'Prepare SonarQube analysis'
+            inputs:
+              SonarQube: ${{ parameters.sonarQubeServiceConnection }}
+              scannerMode: MSBuild
+              projectKey: ${{ parameters.sonarProjectKey }}
+              projectName: ${{ parameters.applicationName }}
+              extraProperties: |
+                sonar.exclusions=**/wwwroot/**,**/*.spec.ts
+                sonar.cs.opencover.reportsPaths=$(Agent.TempDirectory)/TestResults/**/coverage.opencover.xml
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Build for SonarQube'
+            inputs:
+              command: build
+              projects: '**/*.csproj'
+              arguments: '--configuration Release'
+
+          - task: SonarQubeAnalyze@5
+            displayName: 'Run SonarQube analysis'
+
+          - task: SonarQubePublish@5
+            displayName: 'Publish SonarQube quality gate result'
+            inputs:
+              pollingTimeoutSec: 300
+
+  # ---------------------------------------------------------------------------
+  - stage: DeployDev
+    displayName: 'Deploy to Dev'
+    dependsOn: Scan
+    condition: >
+      and(
+        succeeded('Scan'),
+        eq(variables['Build.SourceBranch'], 'refs/heads/main')
+      )
+    jobs:
+      - deployment: DeployDev
+        displayName: 'Deploy to Dev Container App'
+        pool:
+          vmImage: ubuntu-latest
+        environment: dev
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - template: ../../shared/steps/deploy-container-app.yml
+                  parameters:
+                    containerAppName: ${{ parameters.devContainerAppName }}
+                    resourceGroup: ${{ parameters.devResourceGroup }}
+                    imageName: ${{ parameters.containerRegistry }}/${{ parameters.applicationName }}
+                    imageTag: $(Build.SourceVersion)
+                    azureSubscription: ${{ parameters.azureSubscription }}
+
+  # ---------------------------------------------------------------------------
+  - stage: DeployStaging
+    displayName: 'Deploy to Staging'
+    dependsOn: DeployDev
+    jobs:
+      - deployment: DeployStaging
+        displayName: 'Deploy to Staging Container App'
+        pool:
+          vmImage: ubuntu-latest
+        environment: staging
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - template: ../../shared/steps/deploy-container-app.yml
+                  parameters:
+                    containerAppName: ${{ parameters.stagingContainerAppName }}
+                    resourceGroup: ${{ parameters.stagingResourceGroup }}
+                    imageName: ${{ parameters.containerRegistry }}/${{ parameters.applicationName }}
+                    imageTag: $(Build.SourceVersion)
+                    azureSubscription: ${{ parameters.azureSubscription }}
+
+                - template: ../../shared/steps/run-integration-tests.yml
+                  parameters:
+                    targetUrl: https://${{ parameters.stagingContainerAppName }}.azurecontainerapps.io
+                    testEnvironment: staging
+
+  # ---------------------------------------------------------------------------
+  - stage: DeployProd
+    displayName: 'Deploy to Production (Canary)'
+    dependsOn: DeployStaging
+    jobs:
+      - deployment: DeployProd
+        displayName: 'Canary Deploy to Production'
+        pool:
+          vmImage: ubuntu-latest
+        environment: production
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  displayName: 'Canary: Route 10% traffic to new revision'
+                  inputs:
+                    azureSubscription: ${{ parameters.azureSubscription }}
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      NEW_IMAGE="${{ parameters.containerRegistry }}/${{ parameters.applicationName }}:$(Build.SourceVersion)"
+
+                      # Deploy new revision
+                      az containerapp update \
+                        --name "${{ parameters.prodContainerAppName }}" \
+                        --resource-group "${{ parameters.prodResourceGroup }}" \
+                        --image "${NEW_IMAGE}" \
+                        --revision-suffix "$(Build.BuildId)"
+
+                      NEW_REVISION="${{ parameters.prodContainerAppName }}--$(Build.BuildId)"
+
+                      # Set multi-revision mode and route 10% to new revision
+                      az containerapp ingress traffic set \
+                        --name "${{ parameters.prodContainerAppName }}" \
+                        --resource-group "${{ parameters.prodResourceGroup }}" \
+                        --revision-weight "latest=90" "${NEW_REVISION}=10"
+
+                      echo "Canary deployment: 10% traffic routed to ${NEW_REVISION}"
+                      echo "##vso[task.setvariable variable=NEW_REVISION]${NEW_REVISION}"
+
+                - script: sleep 60
+                  displayName: 'Wait 60 seconds — monitor canary metrics'
+
+                - task: AzureCLI@2
+                  displayName: 'Canary: Scale to 50% traffic'
+                  inputs:
+                    azureSubscription: ${{ parameters.azureSubscription }}
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      az containerapp ingress traffic set \
+                        --name "${{ parameters.prodContainerAppName }}" \
+                        --resource-group "${{ parameters.prodResourceGroup }}" \
+                        --revision-weight "latest=50" "$(NEW_REVISION)=50"
+                      echo "Canary: 50% traffic routed"
+
+                - script: sleep 60
+                  displayName: 'Wait 60 seconds — monitor 50% canary'
+
+                - task: AzureCLI@2
+                  displayName: 'Canary: Route 100% traffic (complete rollout)'
+                  inputs:
+                    azureSubscription: ${{ parameters.azureSubscription }}
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      az containerapp ingress traffic set \
+                        --name "${{ parameters.prodContainerAppName }}" \
+                        --resource-group "${{ parameters.prodResourceGroup }}" \
+                        --revision-weight "$(NEW_REVISION)=100"
+                      echo "Canary complete. 100% traffic on new revision."

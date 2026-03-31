@@ -1,0 +1,17 @@
+# Team pipeline extending the Apex Platform dotnet-microservice GitLab CI template.
+
+include:
+  - project: 'apex-platform/apex-platform'
+    ref: main
+    file: 'pipelines/templates/gitlab-ci/dotnet-microservice.yml'
+
+variables:
+  APPLICATION_NAME: "${{ values.serviceName }}"
+  CONTAINER_REGISTRY: "acrapeplatformuks.azurecr.io"
+  DOTNET_VERSION: "8.0"
+  DEV_CONTAINER_APP_NAME: "ca-${{ values.serviceName }}-dev-uks-01"
+  DEV_RESOURCE_GROUP: "rg-${{ values.serviceName }}-dev-uks-01"
+  STAGING_CONTAINER_APP_NAME: "ca-${{ values.serviceName }}-staging-uks-01"
+  STAGING_RESOURCE_GROUP: "rg-${{ values.serviceName }}-staging-uks-01"
+  PROD_CONTAINER_APP_NAME: "ca-${{ values.serviceName }}-prod-uks-01"
+  PROD_RESOURCE_GROUP: "rg-${{ values.serviceName }}-prod-uks-01"

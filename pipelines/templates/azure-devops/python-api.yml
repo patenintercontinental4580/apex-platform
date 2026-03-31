@@ -1,0 +1,387 @@
+# Apex Platform: Python API Pipeline Template
+# Extends this template from your team pipeline with:
+#   resources:
+#     repositories:
+#       - repository: templates
+#         type: git
+#         name: apex-platform/apex-platform
+#   extends:
+#     template: pipelines/templates/azure-devops/python-api.yml@templates
+#     parameters:
+#       applicationName: my-python-api
+#       containerRegistry: myacr.azurecr.io
+#       azureSubscription: my-azure-service-connection
+
+parameters:
+  - name: applicationName
+    type: string
+  - name: pythonVersion
+    type: string
+    default: '3.12'
+  - name: containerRegistry
+    type: string
+  - name: containerRegistryServiceConnection
+    type: string
+  - name: azureSubscription
+    type: string
+  - name: devAppServiceName
+    type: string
+    default: ''
+  - name: devResourceGroup
+    type: string
+    default: ''
+  - name: stagingAppServiceName
+    type: string
+    default: ''
+  - name: stagingResourceGroup
+    type: string
+    default: ''
+  - name: prodAppServiceName
+    type: string
+    default: ''
+  - name: prodResourceGroup
+    type: string
+    default: ''
+
+trigger:
+  branches:
+    include:
+      - main
+      - 'release/*'
+
+stages:
+  # ---------------------------------------------------------------------------
+  - stage: Build
+    displayName: 'Build & Package'
+    jobs:
+      - job: BuildAndTest
+        displayName: 'Install, Test & Push'
+        pool:
+          vmImage: ubuntu-latest
+        variables:
+          IMAGE_TAG: $(Build.SourceVersion)
+          FULL_IMAGE: ${{ parameters.containerRegistry }}/${{ parameters.applicationName }}
+        steps:
+          - checkout: self
+
+          - task: UsePythonVersion@0
+            displayName: 'Use Python ${{ parameters.pythonVersion }}'
+            inputs:
+              versionSpec: ${{ parameters.pythonVersion }}
+              addToPath: true
+
+          - script: |
+              python -m pip install --upgrade pip
+              pip install -r requirements.txt
+              pip install pytest pytest-cov pytest-html coverage
+            displayName: 'pip install dependencies'
+
+          - script: |
+              pytest \
+                --cov=src \
+                --cov-report=xml:$(Agent.TempDirectory)/coverage.xml \
+                --cov-report=html:$(Agent.TempDirectory)/coverage-html \
+                --cov-report=term-missing \
+                --junitxml=$(Agent.TempDirectory)/test-results.xml \
+                tests/unit/
+            displayName: 'pytest with coverage'
+
+          - task: PublishTestResults@2
+            displayName: 'Publish unit test results'
+            condition: always()
+            inputs:
+              testResultsFormat: JUnit
+              testResultsFiles: '$(Agent.TempDirectory)/test-results.xml'
+              failTaskOnFailedTests: true
+              testRunTitle: 'Unit Tests — ${{ parameters.applicationName }}'
+
+          - task: PublishCodeCoverageResults@1
+            displayName: 'Publish code coverage'
+            inputs:
+              codeCoverageTool: Cobertura
+              summaryFileLocation: '$(Agent.TempDirectory)/coverage.xml'
+              reportDirectory: '$(Agent.TempDirectory)/coverage-html'
+
+          - task: Docker@2
+            displayName: 'Docker build'
+            inputs:
+              command: build
+              containerRegistry: ${{ parameters.containerRegistryServiceConnection }}
+              repository: ${{ parameters.applicationName }}
+              dockerfile: '**/Dockerfile'
+              tags: |
+                $(IMAGE_TAG)
+                latest
+              arguments: '--build-arg PYTHON_VERSION=${{ parameters.pythonVersion }}'
+
+          - task: Docker@2
+            displayName: 'Docker push'
+            condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+            inputs:
+              command: push
+              containerRegistry: ${{ parameters.containerRegistryServiceConnection }}
+              repository: ${{ parameters.applicationName }}
+              tags: |
+                $(IMAGE_TAG)
+                latest
+
+  # ---------------------------------------------------------------------------
+  - stage: Scan
+    displayName: 'Security Scan'
+    dependsOn: Build
+    jobs:
+      - job: SecurityScans
+        displayName: 'Trivy + Bandit + Safety'
+        pool:
+          vmImage: ubuntu-latest
+        variables:
+          FULL_IMAGE: ${{ parameters.containerRegistry }}/${{ parameters.applicationName }}:$(Build.SourceVersion)
+        steps:
+          - checkout: self
+
+          - task: UsePythonVersion@0
+            displayName: 'Use Python ${{ parameters.pythonVersion }}'
+            inputs:
+              versionSpec: ${{ parameters.pythonVersion }}
+              addToPath: true
+
+          - script: |
+              pip install bandit safety
+            displayName: 'Install security tools'
+
+          - script: |
+              curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+            displayName: 'Install Trivy'
+
+          - task: AzureCLI@2
+            displayName: 'Authenticate to Container Registry'
+            inputs:
+              azureSubscription: ${{ parameters.azureSubscription }}
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az acr login --name $(echo "${{ parameters.containerRegistry }}" | cut -d. -f1)
+
+          - script: |
+              trivy image \
+                --exit-code 1 \
+                --severity CRITICAL,HIGH \
+                --format table \
+                --ignore-unfixed \
+                "$(FULL_IMAGE)"
+            displayName: 'Trivy container image scan'
+
+          - script: |
+              bandit -r src/ \
+                -f json \
+                -o $(Agent.TempDirectory)/bandit-report.json \
+                --severity-level medium \
+                || (cat $(Agent.TempDirectory)/bandit-report.json && exit 1)
+            displayName: 'Bandit SAST scan'
+
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish Bandit report'
+            condition: always()
+            inputs:
+              pathToPublish: '$(Agent.TempDirectory)/bandit-report.json'
+              artifactName: 'bandit-report'
+
+          - script: |
+              pip install -r requirements.txt
+              safety check --full-report
+            displayName: 'Safety dependency vulnerability check'
+
+  # ---------------------------------------------------------------------------
+  - stage: DeployDev
+    displayName: 'Deploy to Dev'
+    dependsOn: Scan
+    condition: >
+      and(
+        succeeded('Scan'),
+        eq(variables['Build.SourceBranch'], 'refs/heads/main')
+      )
+    jobs:
+      - deployment: DeployDev
+        displayName: 'Deploy to Dev App Service'
+        pool:
+          vmImage: ubuntu-latest
+        environment: dev
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureWebApp@1
+                  displayName: 'Deploy container to Dev App Service'
+                  inputs:
+                    azureSubscription: ${{ parameters.azureSubscription }}
+                    appType: webAppContainer
+                    appName: ${{ parameters.devAppServiceName }}
+                    resourceGroupName: ${{ parameters.devResourceGroup }}
+                    imageName: ${{ parameters.containerRegistry }}/${{ parameters.applicationName }}:$(Build.SourceVersion)
+
+                - task: AzureCLI@2
+                  displayName: 'Verify Dev deployment'
+                  inputs:
+                    azureSubscription: ${{ parameters.azureSubscription }}
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      APP_URL="https://$(az webapp show \
+                        --name "${{ parameters.devAppServiceName }}" \
+                        --resource-group "${{ parameters.devResourceGroup }}" \
+                        --query defaultHostName -o tsv)"
+
+                      echo "Checking health endpoint at ${APP_URL}/health"
+                      for i in {1..10}; do
+                        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${APP_URL}/health" || true)
+                        if [[ "$HTTP_CODE" == "200" ]]; then
+                          echo "Health check passed (attempt ${i})"
+                          break
+                        fi
+                        echo "Attempt ${i}: HTTP ${HTTP_CODE}. Retrying in 15s..."
+                        sleep 15
+                      done
+                      if [[ "$HTTP_CODE" != "200" ]]; then
+                        echo "Health check failed after 10 attempts. Final HTTP code: ${HTTP_CODE}"
+                        exit 1
+                      fi
+
+  # ---------------------------------------------------------------------------
+  - stage: DeployStaging
+    displayName: 'Deploy to Staging'
+    dependsOn: DeployDev
+    jobs:
+      - deployment: DeployStaging
+        displayName: 'Deploy to Staging App Service'
+        pool:
+          vmImage: ubuntu-latest
+        environment: staging
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureWebApp@1
+                  displayName: 'Deploy container to Staging App Service'
+                  inputs:
+                    azureSubscription: ${{ parameters.azureSubscription }}
+                    appType: webAppContainer
+                    appName: ${{ parameters.stagingAppServiceName }}
+                    resourceGroupName: ${{ parameters.stagingResourceGroup }}
+                    imageName: ${{ parameters.containerRegistry }}/${{ parameters.applicationName }}:$(Build.SourceVersion)
+
+                - task: AzureCLI@2
+                  displayName: 'Run integration tests against Staging'
+                  inputs:
+                    azureSubscription: ${{ parameters.azureSubscription }}
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      STAGING_URL="https://$(az webapp show \
+                        --name "${{ parameters.stagingAppServiceName }}" \
+                        --resource-group "${{ parameters.stagingResourceGroup }}" \
+                        --query defaultHostName -o tsv)"
+
+                      echo "Running smoke tests against ${STAGING_URL}"
+                      HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${STAGING_URL}/health")
+                      if [[ "$HTTP_CODE" != "200" ]]; then
+                        echo "Staging health check failed. HTTP code: ${HTTP_CODE}"
+                        exit 1
+                      fi
+                      echo "Staging smoke test passed."
+
+                      # Run pytest integration suite if present
+                      if [[ -d "tests/integration" ]]; then
+                        pip install -r requirements.txt pytest
+                        TARGET_URL="${STAGING_URL}" \
+                        TEST_ENVIRONMENT="staging" \
+                        pytest tests/integration/ \
+                          --junitxml=$(Agent.TempDirectory)/integration-results.xml \
+                          -v
+                      fi
+
+                - task: PublishTestResults@2
+                  displayName: 'Publish integration test results'
+                  condition: always()
+                  inputs:
+                    testResultsFormat: JUnit
+                    testResultsFiles: '$(Agent.TempDirectory)/integration-results.xml'
+                    testRunTitle: 'Integration Tests — ${{ parameters.applicationName }} staging'
+
+  # ---------------------------------------------------------------------------
+  - stage: DeployProd
+    displayName: 'Deploy to Production'
+    dependsOn: DeployStaging
+    jobs:
+      - deployment: DeployProd
+        displayName: 'Deploy to Production App Service'
+        pool:
+          vmImage: ubuntu-latest
+        environment: production
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  displayName: 'Deploy to staging slot (blue/green)'
+                  inputs:
+                    azureSubscription: ${{ parameters.azureSubscription }}
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      NEW_IMAGE="${{ parameters.containerRegistry }}/${{ parameters.applicationName }}:$(Build.SourceVersion)"
+
+                      # Update the staging slot first
+                      az webapp config container set \
+                        --name "${{ parameters.prodAppServiceName }}" \
+                        --resource-group "${{ parameters.prodResourceGroup }}" \
+                        --slot staging \
+                        --docker-custom-image-name "${NEW_IMAGE}" \
+                        --docker-registry-server-url "https://${{ parameters.containerRegistry }}"
+
+                      echo "Waiting for staging slot to start..."
+                      sleep 30
+
+                      SLOT_URL="https://$(az webapp show \
+                        --name "${{ parameters.prodAppServiceName }}" \
+                        --resource-group "${{ parameters.prodResourceGroup }}" \
+                        --slot staging \
+                        --query defaultHostName -o tsv)"
+
+                      HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${SLOT_URL}/health" || echo "000")
+                      if [[ "$HTTP_CODE" != "200" ]]; then
+                        echo "Staging slot health check failed. HTTP: ${HTTP_CODE}"
+                        exit 1
+                      fi
+                      echo "Staging slot healthy. Proceeding with slot swap."
+
+                - task: AzureAppServiceManage@0
+                  displayName: 'Swap staging slot to production'
+                  inputs:
+                    azureSubscription: ${{ parameters.azureSubscription }}
+                    Action: 'Swap Slots'
+                    WebAppName: ${{ parameters.prodAppServiceName }}
+                    ResourceGroupName: ${{ parameters.prodResourceGroup }}
+                    SourceSlot: staging
+
+                - task: AzureCLI@2
+                  displayName: 'Verify production deployment'
+                  inputs:
+                    azureSubscription: ${{ parameters.azureSubscription }}
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      PROD_URL="https://$(az webapp show \
+                        --name "${{ parameters.prodAppServiceName }}" \
+                        --resource-group "${{ parameters.prodResourceGroup }}" \
+                        --query defaultHostName -o tsv)"
+
+                      HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${PROD_URL}/health")
+                      if [[ "$HTTP_CODE" != "200" ]]; then
+                        echo "Production health check failed after swap. HTTP: ${HTTP_CODE}"
+                        exit 1
+                      fi
+                      echo "Production deployment verified. Service is live at ${PROD_URL}"

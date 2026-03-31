@@ -1,0 +1,175 @@
+# Apex Platform: GitLab CI — Terraform Drift Detection Pipeline Template
+#
+# Usage: include this file in your project's .gitlab-ci.yml.
+# Configure a GitLab scheduled pipeline (CI/CD > Schedules) to trigger this
+# pipeline on your desired cadence (e.g. every 4 hours for prod).
+#
+# Required CI/CD variables:
+#   AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, AZURE_CLIENT_ID (OIDC)
+#   TF_WORKING_DIRECTORY        e.g. infrastructure/core
+#   TF_ENVIRONMENT              e.g. prod
+#   TF_BACKEND_STATE_KEY        e.g. core/prod.tfstate
+#   TF_BACKEND_RG               (optional, default: rg-apex-platform-tfstate-uks)
+#   TF_BACKEND_STORAGE_ACCOUNT  (optional, default: stapexplatformtfstate)
+#   TF_BACKEND_CONTAINER        (optional, default: tfstate)
+#   TEAMS_WEBHOOK_URL           Teams incoming webhook URL for drift alerts
+
+stages:
+  - detect-drift
+  - notify-teams
+
+variables:
+  TERRAFORM_VERSION: "1.7.0"
+  TF_BACKEND_RG: "rg-apex-platform-tfstate-uks"
+  TF_BACKEND_STORAGE_ACCOUNT: "stapexplatformtfstate"
+  TF_BACKEND_CONTAINER: "tfstate"
+  TF_IN_AUTOMATION: "true"
+  TF_CLI_ARGS: "-no-color"
+
+# ---------------------------------------------------------------------------
+.azure-oidc-login: &azure-oidc-login
+  - az login
+      --service-principal
+      --federated-token "$CI_JOB_JWT_V2"
+      --tenant "$AZURE_TENANT_ID"
+      --username "$AZURE_CLIENT_ID"
+      --allow-no-subscriptions
+  - az account set --subscription "$AZURE_SUBSCRIPTION_ID"
+  - export ARM_CLIENT_ID="$AZURE_CLIENT_ID"
+  - export ARM_USE_OIDC=true
+  - export ARM_OIDC_TOKEN="$CI_JOB_JWT_V2"
+  - export ARM_TENANT_ID="$AZURE_TENANT_ID"
+  - export ARM_SUBSCRIPTION_ID="$AZURE_SUBSCRIPTION_ID"
+
+# ---------------------------------------------------------------------------
+detect-drift:
+  stage: detect-drift
+  image:
+    name: hashicorp/terraform:$TERRAFORM_VERSION
+    entrypoint: [""]
+  before_script:
+    - apk add --no-cache curl bash
+    - curl -fsSL https://aka.ms/InstallAzureCLIDeb | bash 2>/dev/null || apk add --no-cache azure-cli
+    - *azure-oidc-login
+  script:
+    - |
+      echo "--- Terraform Init ---"
+      cd "$TF_WORKING_DIRECTORY"
+      terraform init \
+        -backend-config="resource_group_name=$TF_BACKEND_RG" \
+        -backend-config="storage_account_name=$TF_BACKEND_STORAGE_ACCOUNT" \
+        -backend-config="container_name=$TF_BACKEND_CONTAINER" \
+        -backend-config="key=$TF_BACKEND_STATE_KEY"
+    - |
+      echo "--- Drift Detection (terraform plan -refresh-only) ---"
+      set +e
+      terraform plan \
+        -detailed-exitcode \
+        -refresh-only \
+        -no-color \
+        2>&1 | tee "$CI_PROJECT_DIR/drift-plan-output.txt"
+      PLAN_EXIT_CODE=$?
+      set -e
+
+      if [[ $PLAN_EXIT_CODE -eq 0 ]]; then
+        echo "No drift detected. Infrastructure matches desired state."
+        echo "DRIFT_DETECTED=false" >> "$CI_PROJECT_DIR/drift.env"
+        echo "DRIFT_SUMMARY=No drift detected in $TF_ENVIRONMENT environment." >> "$CI_PROJECT_DIR/drift.env"
+      elif [[ $PLAN_EXIT_CODE -eq 2 ]]; then
+        echo "DRIFT DETECTED in $TF_ENVIRONMENT environment!"
+        echo "DRIFT_DETECTED=true" >> "$CI_PROJECT_DIR/drift.env"
+
+        # Extract a concise summary (first 40 meaningful lines)
+        DRIFT_LINES=$(grep -E "(will be|must be|has changed|~ |+ |- )" "$CI_PROJECT_DIR/drift-plan-output.txt" \
+          | head -40 \
+          | sed 's/"/\\"/g' \
+          || echo "See pipeline logs for details.")
+        # Store summary as single line for env file
+        DRIFT_SUMMARY=$(echo "Drift detected in $TF_ENVIRONMENT ($TF_WORKING_DIRECTORY). Changes found in live infrastructure.")
+        echo "DRIFT_SUMMARY=${DRIFT_SUMMARY}" >> "$CI_PROJECT_DIR/drift.env"
+
+        # Fail the job so the pipeline shows as failed and triggers notify stage
+        exit 2
+      else
+        echo "Terraform plan failed with exit code $PLAN_EXIT_CODE"
+        echo "DRIFT_DETECTED=error" >> "$CI_PROJECT_DIR/drift.env"
+        echo "DRIFT_SUMMARY=Terraform plan error in $TF_ENVIRONMENT. Exit code: $PLAN_EXIT_CODE" >> "$CI_PROJECT_DIR/drift.env"
+        exit $PLAN_EXIT_CODE
+      fi
+  artifacts:
+    when: always
+    paths:
+      - drift-plan-output.txt
+    reports:
+      dotenv: drift.env
+    expire_in: 30 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+# ---------------------------------------------------------------------------
+notify-teams:
+  stage: notify-teams
+  image: curlimages/curl:latest
+  needs:
+    - job: detect-drift
+      artifacts: true
+  script:
+    - |
+      if [[ -z "$TEAMS_WEBHOOK_URL" ]]; then
+        echo "TEAMS_WEBHOOK_URL not set. Skipping Teams notification."
+        exit 0
+      fi
+
+      PIPELINE_URL="${CI_PROJECT_URL}/-/pipelines/${CI_PIPELINE_ID}"
+      ENVIRONMENT="${TF_ENVIRONMENT:-unknown}"
+      WORKING_DIR="${TF_WORKING_DIRECTORY:-unknown}"
+
+      PAYLOAD=$(printf '{
+        "@type": "MessageCard",
+        "@context": "http://schema.org/extensions",
+        "themeColor": "FF0000",
+        "summary": "Terraform Drift Detected",
+        "sections": [{
+          "activityTitle": "Terraform Drift Detected",
+          "activitySubtitle": "Environment: %s | Directory: %s",
+          "facts": [
+            { "name": "Environment", "value": "%s" },
+            { "name": "Working Directory", "value": "%s" },
+            { "name": "Project", "value": "%s" },
+            { "name": "Pipeline", "value": "%s" },
+            { "name": "Triggered By", "value": "Scheduled drift detection" }
+          ],
+          "text": "Terraform detected that the live infrastructure in **%s** no longer matches the desired state defined in code. Review the pipeline logs and apply drift remediation as soon as possible."
+        }],
+        "potentialAction": [{
+          "@type": "OpenUri",
+          "name": "View Pipeline",
+          "targets": [{ "os": "default", "uri": "%s" }]
+        }]
+      }' \
+        "$ENVIRONMENT" \
+        "$WORKING_DIR" \
+        "$ENVIRONMENT" \
+        "$WORKING_DIR" \
+        "$CI_PROJECT_NAME" \
+        "$PIPELINE_URL" \
+        "$ENVIRONMENT" \
+        "$PIPELINE_URL")
+
+      HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+        -H "Content-Type: application/json" \
+        -d "$PAYLOAD" \
+        "$TEAMS_WEBHOOK_URL")
+
+      if [[ "$HTTP_CODE" == "200" ]]; then
+        echo "Teams notification sent successfully."
+      else
+        echo "Teams notification may have failed. HTTP code: $HTTP_CODE"
+        # Do not fail the job — notification failure should not block the pipeline
+      fi
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: on_failure
+    - if: $CI_PIPELINE_SOURCE == "web"
+      when: on_failure

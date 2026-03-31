@@ -1,0 +1,177 @@
+# Apex Platform: GitLab CI — Terraform Plan & Apply Pipeline Template
+#
+# Usage: include this file in your project's .gitlab-ci.yml and set the
+# required CI/CD variables in GitLab project settings:
+#   AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, AZURE_CLIENT_ID (OIDC)
+#   TF_WORKING_DIRECTORY        e.g. infrastructure/core
+#   TF_ENVIRONMENT              e.g. dev | staging | prod
+#   TF_BACKEND_STATE_KEY        e.g. core/dev.tfstate
+#   TF_BACKEND_RG               e.g. rg-apex-platform-tfstate-uks   (optional, has default)
+#   TF_BACKEND_STORAGE_ACCOUNT  e.g. stapexplatformtfstate           (optional, has default)
+#   TF_BACKEND_CONTAINER        e.g. tfstate                         (optional, has default)
+
+stages:
+  - plan
+  - apply
+
+variables:
+  TERRAFORM_VERSION: "1.7.0"
+  TF_BACKEND_RG: "rg-apex-platform-tfstate-uks"
+  TF_BACKEND_STORAGE_ACCOUNT: "stapexplatformtfstate"
+  TF_BACKEND_CONTAINER: "tfstate"
+  TF_IN_AUTOMATION: "true"
+  TF_CLI_ARGS: "-no-color"
+
+# ---------------------------------------------------------------------------
+.azure-oidc-login: &azure-oidc-login
+  - az login
+      --service-principal
+      --federated-token "$CI_JOB_JWT_V2"
+      --tenant "$AZURE_TENANT_ID"
+      --username "$AZURE_CLIENT_ID"
+      --allow-no-subscriptions
+  - az account set --subscription "$AZURE_SUBSCRIPTION_ID"
+  - export ARM_CLIENT_ID="$AZURE_CLIENT_ID"
+  - export ARM_USE_OIDC=true
+  - export ARM_OIDC_TOKEN="$CI_JOB_JWT_V2"
+  - export ARM_TENANT_ID="$AZURE_TENANT_ID"
+  - export ARM_SUBSCRIPTION_ID="$AZURE_SUBSCRIPTION_ID"
+
+.terraform-image: &terraform-image
+  image:
+    name: hashicorp/terraform:$TERRAFORM_VERSION
+    entrypoint: [""]
+
+# ---------------------------------------------------------------------------
+terraform-plan:
+  stage: plan
+  <<: *terraform-image
+  before_script:
+    - apk add --no-cache curl python3 py3-pip bash
+    - pip3 install --quiet checkov
+    - curl -s https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
+    - curl -fsSL https://aka.ms/InstallAzureCLIDeb | bash 2>/dev/null || apk add --no-cache azure-cli
+    - *azure-oidc-login
+  script:
+    - |
+      echo "--- Terraform Init ---"
+      cd "$TF_WORKING_DIRECTORY"
+      terraform init \
+        -backend-config="resource_group_name=$TF_BACKEND_RG" \
+        -backend-config="storage_account_name=$TF_BACKEND_STORAGE_ACCOUNT" \
+        -backend-config="container_name=$TF_BACKEND_CONTAINER" \
+        -backend-config="key=$TF_BACKEND_STATE_KEY"
+    - |
+      echo "--- Terraform Format Check ---"
+      terraform fmt -check -recursive
+      echo "Format check passed."
+    - |
+      echo "--- Terraform Validate ---"
+      terraform validate
+      echo "Validate passed."
+    - |
+      echo "--- tflint ---"
+      tflint --init
+      tflint --recursive
+      echo "tflint passed."
+    - |
+      echo "--- Checkov Security Scan ---"
+      checkov -d "$TF_WORKING_DIRECTORY" \
+        --framework terraform \
+        --quiet \
+        --soft-fail-on LOW \
+        --output junitxml \
+        --output-file-path $CI_PROJECT_DIR/checkov-results.xml
+      echo "Checkov scan complete."
+    - |
+      echo "--- Terraform Plan ---"
+      set +e
+      terraform plan \
+        -out="$CI_PROJECT_DIR/tfplan" \
+        -detailed-exitcode \
+        -var="environment=$TF_ENVIRONMENT" \
+        2>&1 | tee "$CI_PROJECT_DIR/tfplan-output.txt"
+      PLAN_EXIT_CODE=$?
+      set -e
+
+      if [[ $PLAN_EXIT_CODE -eq 0 ]]; then
+        echo "No changes detected."
+        echo "CHANGES_DETECTED=false" >> "$CI_PROJECT_DIR/plan.env"
+      elif [[ $PLAN_EXIT_CODE -eq 2 ]]; then
+        echo "Changes detected. Plan saved."
+        echo "CHANGES_DETECTED=true" >> "$CI_PROJECT_DIR/plan.env"
+      else
+        echo "Terraform plan failed with exit code $PLAN_EXIT_CODE"
+        cat "$CI_PROJECT_DIR/tfplan-output.txt"
+        exit $PLAN_EXIT_CODE
+      fi
+  artifacts:
+    when: always
+    paths:
+      - tfplan
+      - tfplan-output.txt
+      - checkov-results.xml
+    reports:
+      junit: checkov-results.xml
+      dotenv: plan.env
+    expire_in: 7 days
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH =~ /^release\/.*/
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+# ---------------------------------------------------------------------------
+terraform-apply:
+  stage: apply
+  <<: *terraform-image
+  needs:
+    - job: terraform-plan
+      artifacts: true
+  before_script:
+    - apk add --no-cache curl bash
+    - curl -fsSL https://aka.ms/InstallAzureCLIDeb | bash 2>/dev/null || apk add --no-cache azure-cli
+    - *azure-oidc-login
+  script:
+    - |
+      if [[ "$CHANGES_DETECTED" != "true" ]]; then
+        echo "No infrastructure changes detected. Skipping apply."
+        exit 0
+      fi
+    - |
+      echo "--- Backup Terraform State ---"
+      TIMESTAMP=$(date -u +"%Y%m%dT%H%M%SZ")
+      BACKUP_KEY="${TF_BACKEND_STATE_KEY}.backup.${TIMESTAMP}"
+      az storage blob copy start \
+        --account-name "$TF_BACKEND_STORAGE_ACCOUNT" \
+        --destination-container "$TF_BACKEND_CONTAINER" \
+        --destination-blob "$BACKUP_KEY" \
+        --source-account-name "$TF_BACKEND_STORAGE_ACCOUNT" \
+        --source-container "$TF_BACKEND_CONTAINER" \
+        --source-blob "$TF_BACKEND_STATE_KEY" \
+        --auth-mode login
+      echo "State backed up to: $BACKUP_KEY"
+    - |
+      echo "--- Terraform Init ---"
+      cd "$TF_WORKING_DIRECTORY"
+      terraform init \
+        -backend-config="resource_group_name=$TF_BACKEND_RG" \
+        -backend-config="storage_account_name=$TF_BACKEND_STORAGE_ACCOUNT" \
+        -backend-config="container_name=$TF_BACKEND_CONTAINER" \
+        -backend-config="key=$TF_BACKEND_STATE_KEY"
+    - |
+      echo "--- Terraform Apply ---"
+      terraform apply "$CI_PROJECT_DIR/tfplan"
+      echo "Terraform apply complete."
+  environment:
+    name: $TF_ENVIRONMENT
+  rules:
+    # Auto-apply for non-prod environments
+    - if: $CI_COMMIT_BRANCH == "main" && $TF_ENVIRONMENT != "prod"
+      when: on_success
+    # Manual gate for prod
+    - if: $CI_COMMIT_BRANCH == "main" && $TF_ENVIRONMENT == "prod"
+      when: manual
+      allow_failure: false
+    - if: $CI_COMMIT_BRANCH =~ /^release\/.*/ && $TF_ENVIRONMENT == "prod"
+      when: manual
+      allow_failure: false

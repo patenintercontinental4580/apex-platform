@@ -1,0 +1,127 @@
+# Scheduled pipeline that detects Terraform configuration drift.
+# Runs every 4 hours for production environments, daily for others.
+# Sends a Teams notification if drift is detected.
+
+parameters:
+  - name: workingDirectory
+    type: string
+  - name: environment
+    type: string
+    default: 'dev'
+  - name: azureSubscription
+    type: string
+  - name: backendStateKey
+    type: string
+  - name: teamsWebhookUrl
+    type: string
+    default: ''
+
+schedules:
+  - cron: '0 */4 * * *'
+    displayName: 'Every 4 hours (Production)'
+    branches:
+      include:
+        - main
+    always: true
+
+trigger: none
+
+jobs:
+  - job: DriftDetection
+    displayName: 'Detect Terraform Drift — ${{ parameters.environment }}'
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+      - checkout: self
+
+      - task: TerraformInstaller@1
+        inputs:
+          terraformVersion: '1.7.0'
+
+      - task: AzureCLI@2
+        displayName: 'Terraform Init'
+        inputs:
+          azureSubscription: ${{ parameters.azureSubscription }}
+          scriptType: bash
+          scriptLocation: inlineScript
+          addSpnToEnvironment: true
+          inlineScript: |
+            export ARM_CLIENT_ID=$servicePrincipalId
+            export ARM_CLIENT_SECRET=$servicePrincipalKey
+            export ARM_TENANT_ID=$tenantId
+            export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+
+            cd ${{ parameters.workingDirectory }}
+            terraform init \
+              -backend-config="resource_group_name=rg-apex-platform-tfstate-uks" \
+              -backend-config="storage_account_name=stapexplatformtfstate" \
+              -backend-config="container_name=tfstate" \
+              -backend-config="key=${{ parameters.backendStateKey }}"
+
+      - task: AzureCLI@2
+        displayName: 'Terraform Plan (Drift Detection)'
+        name: DriftCheck
+        inputs:
+          azureSubscription: ${{ parameters.azureSubscription }}
+          scriptType: bash
+          scriptLocation: inlineScript
+          addSpnToEnvironment: true
+          inlineScript: |
+            export ARM_CLIENT_ID=$servicePrincipalId
+            export ARM_CLIENT_SECRET=$servicePrincipalKey
+            export ARM_TENANT_ID=$tenantId
+            export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+
+            cd ${{ parameters.workingDirectory }}
+            set +e
+            terraform plan -detailed-exitcode -refresh-only -no-color 2>&1 | tee /tmp/tf-plan-output.txt
+            PLAN_EXIT_CODE=${PIPESTATUS[0]}
+            set -e
+
+            if [[ $PLAN_EXIT_CODE -eq 0 ]]; then
+              echo "No drift detected."
+              echo "##vso[task.setvariable variable=DRIFT_DETECTED;isOutput=true]false"
+            elif [[ $PLAN_EXIT_CODE -eq 2 ]]; then
+              echo "DRIFT DETECTED in ${{ parameters.environment }}!"
+              echo "##vso[task.setvariable variable=DRIFT_DETECTED;isOutput=true]true"
+              # Capture drift details for notification
+              DRIFT_DETAILS=$(grep -A5 "will be" /tmp/tf-plan-output.txt | head -50 || echo "See pipeline logs for details")
+              echo "##vso[task.setvariable variable=DRIFT_DETAILS;isOutput=true]${DRIFT_DETAILS}"
+            else
+              echo "Terraform plan failed with exit code ${PLAN_EXIT_CODE}"
+              echo "##vso[task.setvariable variable=DRIFT_DETECTED;isOutput=true]error"
+              exit $PLAN_EXIT_CODE
+            fi
+
+      - script: |
+          if [[ "${{ parameters.teamsWebhookUrl }}" != "" ]] && [[ "$(DriftCheck.DRIFT_DETECTED)" == "true" ]]; then
+            PAYLOAD=$(cat <<EOF
+          {
+            "@type": "MessageCard",
+            "@context": "http://schema.org/extensions",
+            "themeColor": "FF0000",
+            "summary": "Terraform Drift Detected",
+            "sections": [{
+              "activityTitle": "Terraform Drift Detected",
+              "activitySubtitle": "Environment: ${{ parameters.environment }} | Directory: ${{ parameters.workingDirectory }}",
+              "activityImage": "https://www.terraform.io/img/logo-text.svg",
+              "facts": [
+                { "name": "Environment", "value": "${{ parameters.environment }}" },
+                { "name": "Working Directory", "value": "${{ parameters.workingDirectory }}" },
+                { "name": "Pipeline Run", "value": "$(System.TeamFoundationCollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)" }
+              ],
+              "text": "Terraform has detected configuration drift. The live infrastructure no longer matches the desired state. Please review the pipeline logs and run drift remediation."
+            }],
+            "potentialAction": [{
+              "@type": "OpenUri",
+              "name": "View Pipeline",
+              "targets": [{ "os": "default", "uri": "$(System.TeamFoundationCollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)" }]
+            }]
+          }
+          EOF
+          )
+            curl -H "Content-Type: application/json" -d "${PAYLOAD}" "${{ parameters.teamsWebhookUrl }}"
+            echo "Teams notification sent."
+          fi
+        displayName: 'Send drift notification'
+        condition: eq(variables['DriftCheck.DRIFT_DETECTED'], 'true')

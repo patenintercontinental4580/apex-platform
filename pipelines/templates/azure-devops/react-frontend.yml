@@ -1,0 +1,316 @@
+# Apex Platform: React Frontend Pipeline Template
+# Extends this template from your team pipeline with:
+#   resources:
+#     repositories:
+#       - repository: templates
+#         type: git
+#         name: apex-platform/apex-platform
+#   extends:
+#     template: pipelines/templates/azure-devops/react-frontend.yml@templates
+#     parameters:
+#       applicationName: my-react-app
+#       azureSubscription: my-azure-service-connection
+#       devStaticWebAppName: swa-my-app-dev
+#       stagingStaticWebAppName: swa-my-app-staging
+#       prodStaticWebAppName: swa-my-app-prod
+
+parameters:
+  - name: applicationName
+    type: string
+  - name: nodeVersion
+    type: string
+    default: '20.x'
+  - name: azureSubscription
+    type: string
+  - name: devStaticWebAppName
+    type: string
+    default: ''
+  - name: stagingStaticWebAppName
+    type: string
+    default: ''
+  - name: prodStaticWebAppName
+    type: string
+    default: ''
+  - name: buildOutputPath
+    type: string
+    default: 'build'
+  - name: appLocation
+    type: string
+    default: '/'
+  - name: apiLocation
+    type: string
+    default: ''
+
+trigger:
+  branches:
+    include:
+      - main
+      - 'release/*'
+
+stages:
+  # ---------------------------------------------------------------------------
+  - stage: Build
+    displayName: 'Build & Test'
+    jobs:
+      - job: BuildAndTest
+        displayName: 'npm ci, test, build'
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+
+          - task: NodeTool@0
+            displayName: 'Use Node.js ${{ parameters.nodeVersion }}'
+            inputs:
+              versionSpec: ${{ parameters.nodeVersion }}
+
+          - script: npm ci
+            displayName: 'npm ci (clean install)'
+
+          - script: |
+              npm test -- --watchAll=false --coverage --coverageReporters=lcov --coverageReporters=text-summary
+            displayName: 'npm test (with coverage)'
+            env:
+              CI: 'true'
+
+          - task: PublishTestResults@2
+            displayName: 'Publish test results'
+            condition: always()
+            inputs:
+              testResultsFormat: JUnit
+              testResultsFiles: 'coverage/junit.xml'
+              failTaskOnFailedTests: true
+              testRunTitle: 'Unit Tests — ${{ parameters.applicationName }}'
+
+          - task: PublishCodeCoverageResults@1
+            displayName: 'Publish code coverage'
+            condition: always()
+            inputs:
+              codeCoverageTool: Cobertura
+              summaryFileLocation: 'coverage/cobertura-coverage.xml'
+
+          - script: |
+              npm run build
+            displayName: 'npm run build'
+            env:
+              CI: 'true'
+              NODE_ENV: production
+
+          - task: PublishPipelineArtifact@1
+            displayName: 'Publish build artifact'
+            inputs:
+              targetPath: ${{ parameters.buildOutputPath }}
+              artifact: react-build-${{ parameters.applicationName }}
+
+  # ---------------------------------------------------------------------------
+  - stage: Scan
+    displayName: 'Security Scan'
+    dependsOn: Build
+    jobs:
+      - job: SecurityScan
+        displayName: 'npm audit + Trivy filesystem scan'
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+
+          - task: NodeTool@0
+            displayName: 'Use Node.js ${{ parameters.nodeVersion }}'
+            inputs:
+              versionSpec: ${{ parameters.nodeVersion }}
+
+          - script: npm ci
+            displayName: 'npm ci'
+
+          - script: |
+              npm audit --audit-level=high --json > $(Agent.TempDirectory)/npm-audit.json || true
+              # Exit with failure only for critical/high vulnerabilities
+              npm audit --audit-level=high
+            displayName: 'npm audit (fail on high/critical)'
+
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish npm audit report'
+            condition: always()
+            inputs:
+              pathToPublish: '$(Agent.TempDirectory)/npm-audit.json'
+              artifactName: 'npm-audit-report'
+
+          - script: |
+              curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+              trivy fs . \
+                --exit-code 1 \
+                --severity CRITICAL,HIGH \
+                --security-checks vuln,secret \
+                --format table
+            displayName: 'Trivy filesystem scan'
+
+  # ---------------------------------------------------------------------------
+  - stage: DeployDev
+    displayName: 'Deploy to Dev'
+    dependsOn: Scan
+    condition: >
+      and(
+        succeeded('Scan'),
+        eq(variables['Build.SourceBranch'], 'refs/heads/main')
+      )
+    jobs:
+      - deployment: DeployDev
+        displayName: 'Deploy to Dev Static Web App'
+        pool:
+          vmImage: ubuntu-latest
+        environment: dev
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: DownloadPipelineArtifact@2
+                  displayName: 'Download build artifact'
+                  inputs:
+                    artifact: react-build-${{ parameters.applicationName }}
+                    path: $(Pipeline.Workspace)/build
+
+                - task: AzureCLI@2
+                  displayName: 'Get Dev Static Web App deployment token'
+                  name: GetDevToken
+                  inputs:
+                    azureSubscription: ${{ parameters.azureSubscription }}
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      DEV_TOKEN=$(az staticwebapp secrets list \
+                        --name "${{ parameters.devStaticWebAppName }}" \
+                        --query "properties.apiKey" -o tsv)
+                      echo "##vso[task.setvariable variable=SWA_DEPLOY_TOKEN;issecret=true]${DEV_TOKEN}"
+
+                - task: AzureStaticWebApp@0
+                  displayName: 'Deploy to Dev Static Web App'
+                  inputs:
+                    app_location: $(Pipeline.Workspace)/build
+                    skip_app_build: true
+                    azure_static_web_apps_api_token: $(SWA_DEPLOY_TOKEN)
+
+  # ---------------------------------------------------------------------------
+  - stage: DeployStaging
+    displayName: 'Deploy to Staging'
+    dependsOn: DeployDev
+    jobs:
+      - deployment: DeployStaging
+        displayName: 'Deploy to Staging Static Web App'
+        pool:
+          vmImage: ubuntu-latest
+        environment: staging
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: DownloadPipelineArtifact@2
+                  displayName: 'Download build artifact'
+                  inputs:
+                    artifact: react-build-${{ parameters.applicationName }}
+                    path: $(Pipeline.Workspace)/build
+
+                - task: AzureCLI@2
+                  displayName: 'Get Staging Static Web App deployment token'
+                  inputs:
+                    azureSubscription: ${{ parameters.azureSubscription }}
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      STAGING_TOKEN=$(az staticwebapp secrets list \
+                        --name "${{ parameters.stagingStaticWebAppName }}" \
+                        --query "properties.apiKey" -o tsv)
+                      echo "##vso[task.setvariable variable=SWA_STAGING_TOKEN;issecret=true]${STAGING_TOKEN}"
+
+                - task: AzureStaticWebApp@0
+                  displayName: 'Deploy to Staging Static Web App'
+                  inputs:
+                    app_location: $(Pipeline.Workspace)/build
+                    skip_app_build: true
+                    azure_static_web_apps_api_token: $(SWA_STAGING_TOKEN)
+
+                - task: AzureCLI@2
+                  displayName: 'Integration smoke test against Staging'
+                  inputs:
+                    azureSubscription: ${{ parameters.azureSubscription }}
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      STAGING_HOSTNAME=$(az staticwebapp show \
+                        --name "${{ parameters.stagingStaticWebAppName }}" \
+                        --query defaultHostname -o tsv)
+                      STAGING_URL="https://${STAGING_HOSTNAME}"
+
+                      echo "Checking staging deployment at ${STAGING_URL}"
+                      for i in {1..8}; do
+                        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${STAGING_URL}" || echo "000")
+                        if [[ "$HTTP_CODE" == "200" ]]; then
+                          echo "Staging smoke test passed (attempt ${i})."
+                          break
+                        fi
+                        echo "Attempt ${i}: HTTP ${HTTP_CODE}. Waiting 15s..."
+                        sleep 15
+                      done
+                      if [[ "$HTTP_CODE" != "200" ]]; then
+                        echo "Staging smoke test failed. Final HTTP code: ${HTTP_CODE}"
+                        exit 1
+                      fi
+
+  # ---------------------------------------------------------------------------
+  - stage: DeployProd
+    displayName: 'Deploy to Production'
+    dependsOn: DeployStaging
+    jobs:
+      - deployment: DeployProd
+        displayName: 'Deploy to Production Static Web App'
+        pool:
+          vmImage: ubuntu-latest
+        environment: production
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: DownloadPipelineArtifact@2
+                  displayName: 'Download build artifact'
+                  inputs:
+                    artifact: react-build-${{ parameters.applicationName }}
+                    path: $(Pipeline.Workspace)/build
+
+                - task: AzureCLI@2
+                  displayName: 'Get Production Static Web App deployment token'
+                  inputs:
+                    azureSubscription: ${{ parameters.azureSubscription }}
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      PROD_TOKEN=$(az staticwebapp secrets list \
+                        --name "${{ parameters.prodStaticWebAppName }}" \
+                        --query "properties.apiKey" -o tsv)
+                      echo "##vso[task.setvariable variable=SWA_PROD_TOKEN;issecret=true]${PROD_TOKEN}"
+
+                - task: AzureStaticWebApp@0
+                  displayName: 'Deploy to Production Static Web App'
+                  inputs:
+                    app_location: $(Pipeline.Workspace)/build
+                    skip_app_build: true
+                    azure_static_web_apps_api_token: $(SWA_PROD_TOKEN)
+
+                - task: AzureCLI@2
+                  displayName: 'Verify production deployment'
+                  inputs:
+                    azureSubscription: ${{ parameters.azureSubscription }}
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      PROD_HOSTNAME=$(az staticwebapp show \
+                        --name "${{ parameters.prodStaticWebAppName }}" \
+                        --query defaultHostname -o tsv)
+                      PROD_URL="https://${PROD_HOSTNAME}"
+
+                      HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${PROD_URL}")
+                      if [[ "$HTTP_CODE" != "200" ]]; then
+                        echo "Production health check failed. HTTP code: ${HTTP_CODE}"
+                        exit 1
+                      fi
+                      echo "Production deployment verified. App is live at ${PROD_URL}"

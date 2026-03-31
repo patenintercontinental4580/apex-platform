@@ -1,0 +1,126 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Domain
+metadata:
+  name: apex-platform
+  description: The Apex Platform internal developer platform domain, encompassing all platform engineering capabilities and team landing zones.
+  tags:
+    - platform-engineering
+    - azure
+spec:
+  owner: platform-team
+---
+apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+  name: order-management
+  description: The order management system, responsible for the full order lifecycle from placement to fulfilment.
+  annotations:
+    backstage.io/techdocs-ref: dir:.
+  tags:
+    - orders
+    - core-domain
+spec:
+  owner: orders-team
+  domain: apex-platform
+---
+apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+  name: payment-processing
+  description: The payment processing system, handling all payment transactions, refunds, and reconciliation.
+  tags:
+    - payments
+    - core-domain
+    - pci-dss
+spec:
+  owner: payments-team
+  domain: apex-platform
+---
+apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+  name: reporting
+  description: The reporting and analytics system, providing business intelligence and operational dashboards.
+  tags:
+    - reporting
+    - analytics
+spec:
+  owner: reporting-team
+  domain: apex-platform
+---
+apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+  name: data-platform
+  description: The data platform, providing data ingestion, processing, and storage capabilities.
+  tags:
+    - data
+    - analytics
+spec:
+  owner: data-team
+  domain: apex-platform
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: platform-team
+  description: The Apex Platform engineering team, responsible for the internal developer platform.
+spec:
+  type: team
+  profile:
+    displayName: Platform Team
+    email: platform-team@example.com
+  children: []
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: payments-team
+  description: The payments engineering team.
+spec:
+  type: team
+  profile:
+    displayName: Payments Team
+    email: payments-team@example.com
+  parent: apex-platform
+  children: []
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: orders-team
+  description: The orders engineering team.
+spec:
+  type: team
+  profile:
+    displayName: Orders Team
+    email: orders-team@example.com
+  parent: apex-platform
+  children: []
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: data-team
+  description: The data engineering team.
+spec:
+  type: team
+  profile:
+    displayName: Data Team
+    email: data-team@example.com
+  parent: apex-platform
+  children: []
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: reporting-team
+  description: The reporting engineering team.
+spec:
+  type: team
+  profile:
+    displayName: Reporting Team
+    email: reporting-team@example.com
+  parent: apex-platform
+  children: []

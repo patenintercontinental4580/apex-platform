@@ -1,0 +1,25 @@
+# Team pipeline extending the Apex Platform dotnet-microservice template.
+# Refer to: https://github.com/your-org/apex-platform/pipelines/templates/azure-devops/dotnet-microservice.yml
+
+resources:
+  repositories:
+    - repository: apexPlatformTemplates
+      type: git
+      name: apex-platform/apex-platform
+      ref: refs/heads/main
+
+extends:
+  template: pipelines/templates/azure-devops/dotnet-microservice.yml@apexPlatformTemplates
+  parameters:
+    applicationName: ${{ values.serviceName }}
+    dotnetVersion: '8.0.x'
+    containerRegistry: 'acr-apex-platform-uks.azurecr.io'
+    containerRegistryServiceConnection: 'acr-service-connection'
+    azureSubscription: 'azure-service-connection'
+    devContainerAppName: 'ca-${{ values.serviceName }}-dev-uks-01'
+    devResourceGroup: 'rg-${{ values.serviceName }}-dev-uks-01'
+    stagingContainerAppName: 'ca-${{ values.serviceName }}-staging-uks-01'
+    stagingResourceGroup: 'rg-${{ values.serviceName }}-staging-uks-01'
+    prodContainerAppName: 'ca-${{ values.serviceName }}-prod-uks-01'
+    prodResourceGroup: 'rg-${{ values.serviceName }}-prod-uks-01'
+    sonarProjectKey: '${{ values.serviceName }}'

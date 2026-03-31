@@ -1,0 +1,290 @@
+# Apex Platform: GitLab CI — Python API Pipeline Template
+#
+# Usage: include this file in your project's .gitlab-ci.yml and set the
+# required CI/CD variables in GitLab project settings:
+#   AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, AZURE_CLIENT_ID (OIDC)
+#   CONTAINER_REGISTRY          e.g. myacr.azurecr.io
+#   APPLICATION_NAME            e.g. my-python-api
+#   DEV_APP_SERVICE_NAME        e.g. app-my-api-dev
+#   DEV_RESOURCE_GROUP
+#   STAGING_APP_SERVICE_NAME
+#   STAGING_RESOURCE_GROUP
+#   PROD_APP_SERVICE_NAME
+#   PROD_RESOURCE_GROUP
+
+stages:
+  - build
+  - scan
+  - deploy-dev
+  - deploy-staging
+  - deploy-prod
+
+variables:
+  PYTHON_VERSION: "3.12"
+  IMAGE_TAG: $CI_COMMIT_SHA
+  FULL_IMAGE: $CONTAINER_REGISTRY/$APPLICATION_NAME:$CI_COMMIT_SHA
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: "/certs"
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
+
+# ---------------------------------------------------------------------------
+.azure-oidc-login: &azure-oidc-login
+  - az login
+      --service-principal
+      --federated-token "$CI_JOB_JWT_V2"
+      --tenant "$AZURE_TENANT_ID"
+      --username "$AZURE_CLIENT_ID"
+      --allow-no-subscriptions
+  - az account set --subscription "$AZURE_SUBSCRIPTION_ID"
+
+# ---------------------------------------------------------------------------
+build:
+  stage: build
+  image: python:$PYTHON_VERSION-slim
+  services:
+    - docker:24-dind
+  variables:
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_VERIFY: 1
+    DOCKER_CERT_PATH: "$DOCKER_TLS_CERTDIR/client"
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq curl ca-certificates
+    - curl -fsSL https://get.docker.com | sh
+    - pip install --upgrade pip
+    - pip install -r requirements.txt
+    - pip install pytest pytest-cov pytest-html coverage
+  script:
+    - |
+      pytest \
+        --cov=src \
+        --cov-report=xml:$CI_PROJECT_DIR/coverage.xml \
+        --cov-report=html:$CI_PROJECT_DIR/coverage-html \
+        --cov-report=term-missing \
+        --junitxml=$CI_PROJECT_DIR/test-results.xml \
+        tests/unit/ \
+        -v
+    - |
+      # Docker build
+      docker login "$CONTAINER_REGISTRY" \
+        -u "$CONTAINER_REGISTRY_USER" \
+        -p "$CONTAINER_REGISTRY_PASSWORD"
+      docker build \
+        --build-arg PYTHON_VERSION="$PYTHON_VERSION" \
+        -t "$FULL_IMAGE" \
+        -t "$CONTAINER_REGISTRY/$APPLICATION_NAME:latest" \
+        .
+    - |
+      if [[ "$CI_COMMIT_BRANCH" == "main" ]]; then
+        docker push "$FULL_IMAGE"
+        docker push "$CONTAINER_REGISTRY/$APPLICATION_NAME:latest"
+        echo "Image pushed: $FULL_IMAGE"
+      fi
+  cache:
+    key: pip-$CI_PROJECT_NAME-$PYTHON_VERSION
+    paths:
+      - .pip-cache/
+  artifacts:
+    when: always
+    reports:
+      junit: test-results.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+    paths:
+      - coverage-html/
+      - coverage.xml
+      - test-results.xml
+    expire_in: 7 days
+  coverage: '/TOTAL.*\s+(\d+\.?\d+)%/'
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH =~ /^release\/.*/
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+# ---------------------------------------------------------------------------
+scan:
+  stage: scan
+  image: ubuntu:22.04
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq curl ca-certificates python3 python3-pip
+    - pip3 install --quiet bandit safety
+    - curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+    - curl -fsSL https://aka.ms/InstallAzureCLIDeb | bash
+  script:
+    - *azure-oidc-login
+    - az acr login --name "$(echo "$CONTAINER_REGISTRY" | cut -d. -f1)"
+    - |
+      echo "--- Trivy container image scan ---"
+      trivy image \
+        --exit-code 1 \
+        --severity CRITICAL,HIGH \
+        --format json \
+        --output $CI_PROJECT_DIR/trivy-report.json \
+        --ignore-unfixed \
+        "$FULL_IMAGE"
+    - |
+      echo "--- Bandit SAST scan ---"
+      bandit -r src/ \
+        -f json \
+        -o $CI_PROJECT_DIR/bandit-report.json \
+        --severity-level medium \
+        || (python3 -c "import json,sys; r=json.load(open('$CI_PROJECT_DIR/bandit-report.json')); [print(i['issue_severity'],i['filename'],i['issue_text']) for i in r.get('results',[])]"; exit 1)
+      echo "Bandit scan passed."
+    - |
+      echo "--- Safety dependency check ---"
+      pip3 install -r requirements.txt
+      safety check --full-report
+      echo "Safety check passed."
+  artifacts:
+    when: always
+    paths:
+      - trivy-report.json
+      - bandit-report.json
+    expire_in: 30 days
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH =~ /^release\/.*/
+
+# ---------------------------------------------------------------------------
+deploy-dev:
+  stage: deploy-dev
+  image: mcr.microsoft.com/azure-cli:latest
+  environment:
+    name: dev
+    url: https://$DEV_APP_SERVICE_NAME.azurewebsites.net
+  before_script:
+    - *azure-oidc-login
+  script:
+    - |
+      echo "Deploying $FULL_IMAGE to Dev App Service: $DEV_APP_SERVICE_NAME"
+      az webapp config container set \
+        --name "$DEV_APP_SERVICE_NAME" \
+        --resource-group "$DEV_RESOURCE_GROUP" \
+        --docker-custom-image-name "$FULL_IMAGE" \
+        --docker-registry-server-url "https://$CONTAINER_REGISTRY"
+    - |
+      echo "Restarting App Service..."
+      az webapp restart \
+        --name "$DEV_APP_SERVICE_NAME" \
+        --resource-group "$DEV_RESOURCE_GROUP"
+    - |
+      DEV_URL="https://${DEV_APP_SERVICE_NAME}.azurewebsites.net"
+      echo "Waiting for service to be ready at $DEV_URL/health..."
+      for i in $(seq 1 10); do
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${DEV_URL}/health" || echo "000")
+        if [[ "$HTTP_CODE" == "200" ]]; then
+          echo "Health check passed (attempt $i)."
+          break
+        fi
+        echo "Attempt $i: HTTP $HTTP_CODE. Waiting 15s..."
+        sleep 15
+      done
+      if [[ "$HTTP_CODE" != "200" ]]; then
+        echo "Dev health check failed. Final HTTP code: $HTTP_CODE"
+        exit 1
+      fi
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# ---------------------------------------------------------------------------
+deploy-staging:
+  stage: deploy-staging
+  image: mcr.microsoft.com/azure-cli:latest
+  environment:
+    name: staging
+    url: https://$STAGING_APP_SERVICE_NAME.azurewebsites.net
+  before_script:
+    - *azure-oidc-login
+  script:
+    - |
+      echo "Deploying $FULL_IMAGE to Staging App Service: $STAGING_APP_SERVICE_NAME"
+      az webapp config container set \
+        --name "$STAGING_APP_SERVICE_NAME" \
+        --resource-group "$STAGING_RESOURCE_GROUP" \
+        --docker-custom-image-name "$FULL_IMAGE" \
+        --docker-registry-server-url "https://$CONTAINER_REGISTRY"
+    - |
+      az webapp restart \
+        --name "$STAGING_APP_SERVICE_NAME" \
+        --resource-group "$STAGING_RESOURCE_GROUP"
+    - |
+      STAGING_URL="https://${STAGING_APP_SERVICE_NAME}.azurewebsites.net"
+      echo "Running integration tests against $STAGING_URL"
+      for i in $(seq 1 10); do
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${STAGING_URL}/health" || echo "000")
+        if [[ "$HTTP_CODE" == "200" ]]; then
+          echo "Staging health check passed (attempt $i)."
+          break
+        fi
+        echo "Attempt $i: HTTP $HTTP_CODE. Waiting 15s..."
+        sleep 15
+      done
+      if [[ "$HTTP_CODE" != "200" ]]; then
+        echo "Staging health check failed. Final HTTP: $HTTP_CODE"
+        exit 1
+      fi
+    - |
+      if [[ -d "tests/integration" ]]; then
+        apt-get update -qq && apt-get install -y -qq python3 python3-pip
+        pip3 install -r requirements.txt pytest
+        TARGET_URL="https://${STAGING_APP_SERVICE_NAME}.azurewebsites.net" \
+        TEST_ENVIRONMENT="staging" \
+        pytest tests/integration/ \
+          --junitxml=$CI_PROJECT_DIR/integration-results.xml \
+          -v
+      fi
+  artifacts:
+    when: always
+    reports:
+      junit: integration-results.xml
+    expire_in: 7 days
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# ---------------------------------------------------------------------------
+deploy-prod:
+  stage: deploy-prod
+  image: mcr.microsoft.com/azure-cli:latest
+  environment:
+    name: production
+    url: https://$PROD_APP_SERVICE_NAME.azurewebsites.net
+  before_script:
+    - *azure-oidc-login
+  script:
+    - |
+      echo "Deploying $FULL_IMAGE to staging slot of Prod App Service: $PROD_APP_SERVICE_NAME"
+      az webapp config container set \
+        --name "$PROD_APP_SERVICE_NAME" \
+        --resource-group "$PROD_RESOURCE_GROUP" \
+        --slot staging \
+        --docker-custom-image-name "$FULL_IMAGE" \
+        --docker-registry-server-url "https://$CONTAINER_REGISTRY"
+    - |
+      echo "Waiting for staging slot to start..."
+      sleep 30
+      SLOT_URL="https://${PROD_APP_SERVICE_NAME}-staging.azurewebsites.net"
+      HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${SLOT_URL}/health" || echo "000")
+      if [[ "$HTTP_CODE" != "200" ]]; then
+        echo "Staging slot health check failed. HTTP: $HTTP_CODE"
+        exit 1
+      fi
+      echo "Staging slot is healthy. Proceeding with slot swap."
+    - |
+      az webapp deployment slot swap \
+        --name "$PROD_APP_SERVICE_NAME" \
+        --resource-group "$PROD_RESOURCE_GROUP" \
+        --slot staging \
+        --target-slot production
+      echo "Slot swap complete."
+    - |
+      PROD_URL="https://${PROD_APP_SERVICE_NAME}.azurewebsites.net"
+      HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${PROD_URL}/health" || echo "000")
+      if [[ "$HTTP_CODE" != "200" ]]; then
+        echo "Production health check failed after slot swap. HTTP: $HTTP_CODE"
+        exit 1
+      fi
+      echo "Production deployment verified. Service live at $PROD_URL"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
+      allow_failure: false

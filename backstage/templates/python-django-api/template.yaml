@@ -1,0 +1,166 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: python-django-api
+  title: Python Django REST API
+  description: Scaffolds a production-ready Django REST Framework API using the Apex Platform golden path, complete with Azure Key Vault integration, managed identity authentication, Application Insights telemetry, and CI/CD pipelines targeting Azure App Service.
+  tags:
+    - python
+    - django
+    - azure-app-service
+    - recommended
+spec:
+  owner: platform-team
+  type: service
+
+  parameters:
+    - title: Service Details
+      required:
+        - serviceName
+        - owningTeam
+        - description
+      properties:
+        serviceName:
+          title: Service Name
+          type: string
+          description: >
+            The name of your service. Must be lowercase, start with a letter,
+            and contain only letters, numbers, and hyphens (3–30 characters).
+          pattern: '^[a-z][a-z0-9-]{2,29}$'
+          ui:autofocus: true
+          ui:help: 'Examples: catalogue-api, product-service, inventory-backend'
+        owningTeam:
+          title: Owning Team
+          type: string
+          description: The team responsible for this service.
+          enum:
+            - orders-team
+            - payments-team
+            - reporting-team
+            - data-team
+            - platform-team
+          enumNames:
+            - Orders Team
+            - Payments Team
+            - Reporting Team
+            - Data Team
+            - Platform Team
+        description:
+          title: Description
+          type: string
+          description: A brief description of what this service does.
+          ui:widget: textarea
+          ui:options:
+            rows: 3
+        system:
+          title: System
+          type: string
+          description: The system this service belongs to.
+          enum:
+            - order-management
+            - payment-processing
+            - reporting
+            - data-platform
+          default: order-management
+        pythonVersion:
+          title: Python Version
+          type: string
+          description: The Python runtime version to use.
+          enum:
+            - "3.11"
+            - "3.12"
+          default: "3.12"
+
+    - title: Infrastructure Options
+      properties:
+        environment:
+          title: Initial Environment
+          type: string
+          description: The first environment to configure infrastructure for.
+          enum:
+            - dev
+            - staging
+          default: dev
+        appServiceSku:
+          title: App Service SKU
+          type: string
+          description: The Azure App Service plan SKU tier. Use B2 for dev/staging and P2v3 for production.
+          enum:
+            - B2
+            - B3
+            - P1v3
+            - P2v3
+          default: B2
+        needsDatabase:
+          title: Needs PostgreSQL Database?
+          type: boolean
+          description: Provision an Azure Database for PostgreSQL Flexible Server for this service.
+          default: false
+        needsKeyVault:
+          title: Needs Key Vault?
+          type: boolean
+          description: Provision a dedicated Azure Key Vault for this service.
+          default: true
+        needsRedis:
+          title: Needs Redis Cache?
+          type: boolean
+          description: Provision an Azure Cache for Redis instance for this service (useful for Django session and cache backends).
+          default: false
+
+    - title: Repository Settings
+      required:
+        - repoOrg
+      properties:
+        repoOrg:
+          title: Azure DevOps Organisation
+          type: string
+          description: The Azure DevOps organisation name.
+          default: my-organisation
+        repoProject:
+          title: Azure DevOps Project
+          type: string
+          description: The Azure DevOps project name.
+          default: apex-platform
+
+  steps:
+    - id: fetch-template
+      name: Fetch Skeleton
+      action: fetch:template
+      input:
+        url: ../../golden-paths/python-django-api
+        values:
+          serviceName: ${{ parameters.serviceName }}
+          owningTeam: ${{ parameters.owningTeam }}
+          description: ${{ parameters.description }}
+          system: ${{ parameters.system }}
+          pythonVersion: ${{ parameters.pythonVersion }}
+          environment: ${{ parameters.environment }}
+          appServiceSku: ${{ parameters.appServiceSku }}
+          needsDatabase: ${{ parameters.needsDatabase }}
+          needsKeyVault: ${{ parameters.needsKeyVault }}
+          needsRedis: ${{ parameters.needsRedis }}
+
+    - id: publish
+      name: Publish to Azure DevOps
+      action: publish:azure
+      input:
+        allowedHosts: ['dev.azure.com']
+        description: ${{ parameters.description }}
+        repoUrl: dev.azure.com?owner=${{ parameters.repoOrg }}&repo=${{ parameters.serviceName }}&organization=${{ parameters.repoOrg }}&project=${{ parameters.repoProject }}
+        defaultBranch: main
+        gitCommitMessage: 'feat: initial scaffold from Apex Platform template'
+
+    - id: register
+      name: Register in Backstage Catalogue
+      action: catalog:register
+      input:
+        repoContentsUrl: ${{ steps['publish'].output.repoContentsUrl }}
+        catalogInfoPath: '/catalog-info.yaml'
+
+  output:
+    links:
+      - title: Repository
+        url: ${{ steps['publish'].output.remoteUrl }}
+      - title: Open in Catalogue
+        icon: catalog
+        entityRef: ${{ steps['register'].output.entityRef }}

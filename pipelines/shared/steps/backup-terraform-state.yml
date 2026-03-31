@@ -1,0 +1,40 @@
+# Backs up the current Terraform state file before applying changes.
+# Creates a timestamped copy in the same storage container.
+parameters:
+  - name: storageAccountName
+    type: string
+    default: 'stapexplatformtfstate'
+  - name: containerName
+    type: string
+    default: 'tfstate'
+  - name: stateKey
+    type: string
+  - name: azureSubscription
+    type: string
+
+steps:
+  - task: AzureCLI@2
+    displayName: 'Backup Terraform state: ${{ parameters.stateKey }}'
+    inputs:
+      azureSubscription: ${{ parameters.azureSubscription }}
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set -euo pipefail
+
+        TIMESTAMP=$(date -u +"%Y%m%dT%H%M%SZ")
+        BACKUP_KEY="${{ parameters.stateKey }}.backup.${TIMESTAMP}"
+
+        echo "Backing up state '${{ parameters.stateKey }}' to '${BACKUP_KEY}'..."
+
+        az storage blob copy start \
+          --account-name "${{ parameters.storageAccountName }}" \
+          --destination-container "${{ parameters.containerName }}" \
+          --destination-blob "${BACKUP_KEY}" \
+          --source-account-name "${{ parameters.storageAccountName }}" \
+          --source-container "${{ parameters.containerName }}" \
+          --source-blob "${{ parameters.stateKey }}" \
+          --auth-mode login
+
+        echo "State backup created: ${BACKUP_KEY}"
+        echo "##vso[task.setvariable variable=TF_STATE_BACKUP_KEY;isOutput=true]${BACKUP_KEY}"

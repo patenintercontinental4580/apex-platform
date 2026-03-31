@@ -1,0 +1,294 @@
+# Apex Platform: GitLab CI — .NET Microservice Pipeline Template
+#
+# Usage: include this file in your project's .gitlab-ci.yml and set the
+# required CI/CD variables in GitLab project settings:
+#   AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, AZURE_CLIENT_ID (OIDC)
+#   CONTAINER_REGISTRY        e.g. myacr.azurecr.io
+#   APPLICATION_NAME          e.g. my-dotnet-service
+#   DEV_CONTAINER_APP_NAME    e.g. ca-my-service-dev
+#   DEV_RESOURCE_GROUP        e.g. rg-my-service-dev
+#   STAGING_CONTAINER_APP_NAME
+#   STAGING_RESOURCE_GROUP
+#   PROD_CONTAINER_APP_NAME
+#   PROD_RESOURCE_GROUP
+#   SONAR_TOKEN
+#   SONAR_HOST_URL
+
+stages:
+  - build
+  - scan
+  - deploy-dev
+  - deploy-staging
+  - deploy-prod
+
+variables:
+  DOTNET_VERSION: "8.0"
+  IMAGE_TAG: $CI_COMMIT_SHA
+  FULL_IMAGE: $CONTAINER_REGISTRY/$APPLICATION_NAME:$CI_COMMIT_SHA
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: "/certs"
+  FF_USE_FASTZIP: "true"
+
+# ---------------------------------------------------------------------------
+.azure-oidc-login: &azure-oidc-login
+  - az login
+      --service-principal
+      --federated-token "$CI_JOB_JWT_V2"
+      --tenant "$AZURE_TENANT_ID"
+      --username "$AZURE_CLIENT_ID"
+      --allow-no-subscriptions
+  - az account set --subscription "$AZURE_SUBSCRIPTION_ID"
+
+# ---------------------------------------------------------------------------
+build-and-test:
+  stage: build
+  image: mcr.microsoft.com/dotnet/sdk:8.0
+  services:
+    - docker:24-dind
+  variables:
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_VERIFY: 1
+    DOCKER_CERT_PATH: "$DOCKER_TLS_CERTDIR/client"
+  before_script:
+    - dotnet restore
+    - apt-get update -qq && apt-get install -y -qq curl
+    - curl -fsSL https://get.docker.com | sh
+  script:
+    - dotnet build --configuration Release --no-restore
+    - dotnet test
+        --configuration Release
+        --no-build
+        --logger trx
+        --results-directory $CI_PROJECT_DIR/TestResults
+        --collect:"XPlat Code Coverage"
+        /p:CoverletOutputFormat=opencover
+    - |
+      # Convert TRX to JUnit format for GitLab test reports
+      dotnet tool install --global trx2junit || true
+      export PATH="$PATH:$HOME/.dotnet/tools"
+      for trx in TestResults/*.trx; do trx2junit "$trx"; done
+    - |
+      # Docker build
+      docker login "$CONTAINER_REGISTRY" -u "$AZURE_CLIENT_ID" -p "$CI_JOB_JWT_V2" || \
+        docker login "$CONTAINER_REGISTRY" -u "$CONTAINER_REGISTRY_USER" -p "$CONTAINER_REGISTRY_PASSWORD"
+      docker build -t "$FULL_IMAGE" -t "$CONTAINER_REGISTRY/$APPLICATION_NAME:latest" .
+    - |
+      # Docker push only on main branch
+      if [[ "$CI_COMMIT_BRANCH" == "main" ]]; then
+        docker push "$FULL_IMAGE"
+        docker push "$CONTAINER_REGISTRY/$APPLICATION_NAME:latest"
+        echo "Image pushed: $FULL_IMAGE"
+      fi
+  artifacts:
+    when: always
+    reports:
+      junit:
+        - TestResults/*.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: TestResults/**/coverage.cobertura.xml
+    paths:
+      - TestResults/
+    expire_in: 7 days
+  coverage: '/Total.*?(\d+\.?\d+)%/'
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH =~ /^release\/.*/
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+# ---------------------------------------------------------------------------
+security-scan:
+  stage: scan
+  image: ubuntu:22.04
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq curl ca-certificates python3 python3-pip
+    - pip3 install --quiet checkov
+    - curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+    - curl -fsSL https://aka.ms/InstallAzureCLIDeb | bash
+  script:
+    - *azure-oidc-login
+    - az acr login --name "$(echo "$CONTAINER_REGISTRY" | cut -d. -f1)"
+    - |
+      trivy image \
+        --exit-code 1 \
+        --severity CRITICAL,HIGH \
+        --format json \
+        --output $CI_PROJECT_DIR/trivy-report.json \
+        --ignore-unfixed \
+        "$FULL_IMAGE"
+    - |
+      trivy image \
+        --exit-code 0 \
+        --severity CRITICAL,HIGH \
+        --format table \
+        --ignore-unfixed \
+        "$FULL_IMAGE" || true
+  artifacts:
+    when: always
+    paths:
+      - trivy-report.json
+    expire_in: 30 days
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH =~ /^release\/.*/
+
+# ---------------------------------------------------------------------------
+sonarqube-analysis:
+  stage: scan
+  image: mcr.microsoft.com/dotnet/sdk:8.0
+  variables:
+    SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"
+    GIT_DEPTH: "0"
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq openjdk-17-jdk
+    - dotnet tool install --global dotnet-sonarscanner
+    - export PATH="$PATH:$HOME/.dotnet/tools"
+  script:
+    - dotnet sonarscanner begin
+        /k:"$APPLICATION_NAME"
+        /d:sonar.host.url="$SONAR_HOST_URL"
+        /d:sonar.login="$SONAR_TOKEN"
+        /d:sonar.cs.opencover.reportsPaths="TestResults/**/coverage.opencover.xml"
+        /d:sonar.exclusions="**/wwwroot/**"
+    - dotnet build --configuration Release
+    - dotnet sonarscanner end /d:sonar.login="$SONAR_TOKEN"
+  cache:
+    key: sonar-cache-$CI_PROJECT_NAME
+    paths:
+      - .sonar/cache
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH =~ /^release\/.*/
+
+# ---------------------------------------------------------------------------
+deploy-dev:
+  stage: deploy-dev
+  image: mcr.microsoft.com/azure-cli:latest
+  environment:
+    name: dev
+    url: https://$DEV_CONTAINER_APP_NAME.azurecontainerapps.io
+  before_script:
+    - *azure-oidc-login
+  script:
+    - |
+      echo "Deploying $FULL_IMAGE to Dev Container App: $DEV_CONTAINER_APP_NAME"
+      az containerapp update \
+        --name "$DEV_CONTAINER_APP_NAME" \
+        --resource-group "$DEV_RESOURCE_GROUP" \
+        --image "$FULL_IMAGE" \
+        --output table
+    - |
+      ACTIVE_IMAGE=$(az containerapp show \
+        --name "$DEV_CONTAINER_APP_NAME" \
+        --resource-group "$DEV_RESOURCE_GROUP" \
+        --query "properties.template.containers[0].image" \
+        --output tsv)
+      if [[ "$ACTIVE_IMAGE" == "$FULL_IMAGE" ]]; then
+        echo "Dev deployment verified. Active image: $ACTIVE_IMAGE"
+      else
+        echo "Deployment verification failed. Expected: $FULL_IMAGE, Got: $ACTIVE_IMAGE"
+        exit 1
+      fi
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# ---------------------------------------------------------------------------
+deploy-staging:
+  stage: deploy-staging
+  image: mcr.microsoft.com/azure-cli:latest
+  environment:
+    name: staging
+    url: https://$STAGING_CONTAINER_APP_NAME.azurecontainerapps.io
+  before_script:
+    - *azure-oidc-login
+  script:
+    - |
+      echo "Deploying $FULL_IMAGE to Staging Container App: $STAGING_CONTAINER_APP_NAME"
+      az containerapp update \
+        --name "$STAGING_CONTAINER_APP_NAME" \
+        --resource-group "$STAGING_RESOURCE_GROUP" \
+        --image "$FULL_IMAGE" \
+        --output table
+    - |
+      ACTIVE_IMAGE=$(az containerapp show \
+        --name "$STAGING_CONTAINER_APP_NAME" \
+        --resource-group "$STAGING_RESOURCE_GROUP" \
+        --query "properties.template.containers[0].image" \
+        --output tsv)
+      if [[ "$ACTIVE_IMAGE" != "$FULL_IMAGE" ]]; then
+        echo "Staging deployment verification failed."
+        exit 1
+      fi
+      echo "Staging deployment verified."
+    - |
+      # Integration smoke test
+      STAGING_URL="https://${STAGING_CONTAINER_APP_NAME}.azurecontainerapps.io"
+      for i in {1..10}; do
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${STAGING_URL}/health" || echo "000")
+        if [[ "$HTTP_CODE" == "200" ]]; then
+          echo "Integration smoke test passed (attempt $i)."
+          break
+        fi
+        echo "Attempt $i: HTTP $HTTP_CODE. Waiting 15s..."
+        sleep 15
+      done
+      if [[ "$HTTP_CODE" != "200" ]]; then
+        echo "Integration smoke test failed. Final HTTP: $HTTP_CODE"
+        exit 1
+      fi
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# ---------------------------------------------------------------------------
+deploy-prod:
+  stage: deploy-prod
+  image: mcr.microsoft.com/azure-cli:latest
+  environment:
+    name: production
+    url: https://$PROD_CONTAINER_APP_NAME.azurecontainerapps.io
+  before_script:
+    - *azure-oidc-login
+  script:
+    - |
+      NEW_IMAGE="$FULL_IMAGE"
+
+      # Deploy new revision with build ID suffix for canary
+      az containerapp update \
+        --name "$PROD_CONTAINER_APP_NAME" \
+        --resource-group "$PROD_RESOURCE_GROUP" \
+        --image "$NEW_IMAGE" \
+        --revision-suffix "$CI_PIPELINE_IID"
+
+      NEW_REVISION="${PROD_CONTAINER_APP_NAME}--${CI_PIPELINE_IID}"
+      echo "New revision: $NEW_REVISION"
+
+      # Route 10% traffic to new revision
+      az containerapp ingress traffic set \
+        --name "$PROD_CONTAINER_APP_NAME" \
+        --resource-group "$PROD_RESOURCE_GROUP" \
+        --revision-weight "latest=90" "${NEW_REVISION}=10"
+      echo "Canary: 10% traffic routed to $NEW_REVISION"
+
+    - sleep 60
+
+    - |
+      NEW_REVISION="${PROD_CONTAINER_APP_NAME}--${CI_PIPELINE_IID}"
+      az containerapp ingress traffic set \
+        --name "$PROD_CONTAINER_APP_NAME" \
+        --resource-group "$PROD_RESOURCE_GROUP" \
+        --revision-weight "latest=50" "${NEW_REVISION}=50"
+      echo "Canary: 50% traffic routed"
+
+    - sleep 60
+
+    - |
+      NEW_REVISION="${PROD_CONTAINER_APP_NAME}--${CI_PIPELINE_IID}"
+      az containerapp ingress traffic set \
+        --name "$PROD_CONTAINER_APP_NAME" \
+        --resource-group "$PROD_RESOURCE_GROUP" \
+        --revision-weight "${NEW_REVISION}=100"
+      echo "Canary complete. 100% traffic on new revision $NEW_REVISION"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
+      allow_failure: false

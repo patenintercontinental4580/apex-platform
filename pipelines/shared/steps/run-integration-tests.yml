@@ -1,0 +1,43 @@
+# Reusable step template for running integration tests against a deployed environment.
+parameters:
+  - name: testProjectPath
+    type: string
+    default: 'tests/integration'
+  - name: targetUrl
+    type: string
+  - name: testEnvironment
+    type: string
+    default: 'dev'
+  - name: dotnetVersion
+    type: string
+    default: '8.0.x'
+
+steps:
+  - task: UseDotNet@2
+    displayName: 'Use .NET ${{ parameters.dotnetVersion }}'
+    inputs:
+      version: ${{ parameters.dotnetVersion }}
+
+  - task: DotNetCoreCLI@2
+    displayName: 'Run integration tests against ${{ parameters.testEnvironment }}'
+    inputs:
+      command: test
+      projects: '${{ parameters.testProjectPath }}/**/*.csproj'
+      arguments: >
+        --configuration Release
+        --logger trx
+        --results-directory $(Agent.TempDirectory)/TestResults
+        --collect:"XPlat Code Coverage"
+      publishWebProjects: false
+    env:
+      TARGET_URL: ${{ parameters.targetUrl }}
+      TEST_ENVIRONMENT: ${{ parameters.testEnvironment }}
+
+  - task: PublishTestResults@2
+    displayName: 'Publish integration test results'
+    condition: always()
+    inputs:
+      testResultsFormat: VSTest
+      testResultsFiles: '$(Agent.TempDirectory)/TestResults/*.trx'
+      failTaskOnFailedTests: true
+      testRunTitle: 'Integration Tests - ${{ parameters.testEnvironment }}'

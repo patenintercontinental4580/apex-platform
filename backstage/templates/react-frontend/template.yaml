@@ -1,0 +1,159 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: react-frontend
+  title: React Frontend (Vite + TypeScript)
+  description: Scaffolds a production-ready React single-page application using Vite and TypeScript, following the Apex Platform golden path. Includes Azure AD authentication via MSAL, Application Insights telemetry, and CI/CD pipelines targeting Azure Static Web Apps.
+  tags:
+    - react
+    - typescript
+    - azure-static-web-apps
+    - recommended
+spec:
+  owner: platform-team
+  type: website
+
+  parameters:
+    - title: Application Details
+      required:
+        - serviceName
+        - owningTeam
+        - description
+        - apiBaseUrl
+      properties:
+        serviceName:
+          title: Application Name
+          type: string
+          description: >
+            The name of your frontend application. Must be lowercase, start with a letter,
+            and contain only letters, numbers, and hyphens (3–30 characters).
+          pattern: '^[a-z][a-z0-9-]{2,29}$'
+          ui:autofocus: true
+          ui:help: 'Examples: orders-ui, customer-portal, reporting-dashboard'
+        owningTeam:
+          title: Owning Team
+          type: string
+          description: The team responsible for this application.
+          enum:
+            - orders-team
+            - payments-team
+            - reporting-team
+            - data-team
+            - platform-team
+          enumNames:
+            - Orders Team
+            - Payments Team
+            - Reporting Team
+            - Data Team
+            - Platform Team
+        description:
+          title: Description
+          type: string
+          description: A brief description of what this application does.
+          ui:widget: textarea
+          ui:options:
+            rows: 3
+        system:
+          title: System
+          type: string
+          description: The system this application belongs to.
+          enum:
+            - order-management
+            - payment-processing
+            - reporting
+            - data-platform
+          default: order-management
+        apiBaseUrl:
+          title: Backend API Base URL
+          type: string
+          description: >
+            The base URL of the backend API this frontend will call.
+            This is used to configure the Vite proxy and the API client during scaffolding.
+          ui:help: 'Example: https://orders-api.dev.example.com'
+          default: 'https://api.dev.example.com'
+
+    - title: Infrastructure Options
+      properties:
+        environment:
+          title: Initial Environment
+          type: string
+          description: The first environment to configure infrastructure for.
+          enum:
+            - dev
+            - staging
+          default: dev
+        staticWebAppSku:
+          title: Static Web App SKU
+          type: string
+          description: The Azure Static Web App pricing tier. Standard unlocks private endpoints and custom auth.
+          enum:
+            - Free
+            - Standard
+          default: Standard
+        enableAzureAdAuth:
+          title: Enable Azure AD Authentication?
+          type: boolean
+          description: Configure MSAL authentication with Azure AD. Recommended for internal applications.
+          default: true
+        enableApplicationInsights:
+          title: Enable Application Insights?
+          type: boolean
+          description: Instrument the application with Azure Application Insights for client-side telemetry.
+          default: true
+
+    - title: Repository Settings
+      required:
+        - repoOrg
+      properties:
+        repoOrg:
+          title: Azure DevOps Organisation
+          type: string
+          description: The Azure DevOps organisation name.
+          default: my-organisation
+        repoProject:
+          title: Azure DevOps Project
+          type: string
+          description: The Azure DevOps project name.
+          default: apex-platform
+
+  steps:
+    - id: fetch-template
+      name: Fetch Skeleton
+      action: fetch:template
+      input:
+        url: ../../golden-paths/react-frontend
+        values:
+          serviceName: ${{ parameters.serviceName }}
+          owningTeam: ${{ parameters.owningTeam }}
+          description: ${{ parameters.description }}
+          system: ${{ parameters.system }}
+          apiBaseUrl: ${{ parameters.apiBaseUrl }}
+          environment: ${{ parameters.environment }}
+          staticWebAppSku: ${{ parameters.staticWebAppSku }}
+          enableAzureAdAuth: ${{ parameters.enableAzureAdAuth }}
+          enableApplicationInsights: ${{ parameters.enableApplicationInsights }}
+
+    - id: publish
+      name: Publish to Azure DevOps
+      action: publish:azure
+      input:
+        allowedHosts: ['dev.azure.com']
+        description: ${{ parameters.description }}
+        repoUrl: dev.azure.com?owner=${{ parameters.repoOrg }}&repo=${{ parameters.serviceName }}&organization=${{ parameters.repoOrg }}&project=${{ parameters.repoProject }}
+        defaultBranch: main
+        gitCommitMessage: 'feat: initial scaffold from Apex Platform template'
+
+    - id: register
+      name: Register in Backstage Catalogue
+      action: catalog:register
+      input:
+        repoContentsUrl: ${{ steps['publish'].output.repoContentsUrl }}
+        catalogInfoPath: '/catalog-info.yaml'
+
+  output:
+    links:
+      - title: Repository
+        url: ${{ steps['publish'].output.remoteUrl }}
+      - title: Open in Catalogue
+        icon: catalog
+        entityRef: ${{ steps['register'].output.entityRef }}

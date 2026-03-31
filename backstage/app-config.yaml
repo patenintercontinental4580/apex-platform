@@ -1,0 +1,84 @@
+app:
+  title: Apex Platform Developer Portal
+  baseUrl: http://localhost:3000
+
+organization:
+  name: Apex Platform
+
+backend:
+  baseUrl: http://localhost:7007
+  listen:
+    port: 7007
+  csp:
+    connect-src: ["'self'", 'http:', 'https:']
+  cors:
+    origin: http://localhost:3000
+    methods: [GET, HEAD, PATCH, POST, PUT, DELETE]
+    credentials: true
+  database:
+    client: pg
+    connection:
+      host: ${POSTGRES_HOST}
+      port: ${POSTGRES_PORT}
+      user: ${POSTGRES_USER}
+      password: ${POSTGRES_PASSWORD}
+      database: backstage
+
+integrations:
+  azure:
+    - host: dev.azure.com
+      credentials:
+        - organizations:
+            - my-organisation
+          personalAccessToken: ${AZURE_DEVOPS_TOKEN}
+
+proxy:
+  endpoints:
+    '/azure-devops/api':
+      target: 'https://dev.azure.com'
+      changeOrigin: true
+      headers:
+        Authorization: 'Basic ${AZURE_DEVOPS_TOKEN_BASE64}'
+
+auth:
+  environment: development
+  providers:
+    microsoft:
+      development:
+        clientId: ${AUTH_MICROSOFT_CLIENT_ID}
+        clientSecret: ${AUTH_MICROSOFT_CLIENT_SECRET}
+        tenantId: ${AUTH_MICROSOFT_TENANT_ID}
+        domainHint: ${AUTH_MICROSOFT_TENANT_ID}
+        signIn:
+          resolvers:
+            - resolver: emailMatchingUserEntityProfileEmail
+            - resolver: emailLocalPartMatchingUserEntityName
+
+catalog:
+  import:
+    entityFilename: catalog-info.yaml
+    pullRequestBranchName: backstage-integration
+  rules:
+    - allow: [Component, System, API, Resource, Location, Template, Group, User, Domain]
+  locations:
+    - type: file
+      target: ../../backstage/catalog/platform-systems.yaml
+    - type: file
+      target: ../../backstage/templates/dotnet-microservice/template.yaml
+    - type: file
+      target: ../../backstage/templates/python-django-api/template.yaml
+    - type: file
+      target: ../../backstage/templates/react-frontend/template.yaml
+
+techdocs:
+  builder: local
+  generator:
+    runIn: local
+  publisher:
+    type: local
+
+scaffolder:
+  defaultAuthor:
+    name: Apex Platform Bot
+    email: platform-bot@example.com
+  defaultCommitMessage: 'feat: scaffold new service from Apex Platform template'
