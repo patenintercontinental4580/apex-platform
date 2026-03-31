@@ -1,0 +1,32 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.2.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "golden-paths", "golden-paths", "{8D6C601F-385F-A6E3-8FB7-126591C2D013}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "dotnet-microservice", "dotnet-microservice", "{61942B56-67EC-5C4C-BB11-3F08B0D20C73}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ApexService", "golden-paths\dotnet-microservice\ApexService.csproj", "{02EF0673-892C-C10A-DDDF-33B25BE015A9}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{02EF0673-892C-C10A-DDDF-33B25BE015A9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{02EF0673-892C-C10A-DDDF-33B25BE015A9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{02EF0673-892C-C10A-DDDF-33B25BE015A9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{02EF0673-892C-C10A-DDDF-33B25BE015A9}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{61942B56-67EC-5C4C-BB11-3F08B0D20C73} = {8D6C601F-385F-A6E3-8FB7-126591C2D013}
+		{02EF0673-892C-C10A-DDDF-33B25BE015A9} = {61942B56-67EC-5C4C-BB11-3F08B0D20C73}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {4038CE61-9D09-4DF1-95DB-98BDD7C6D131}
+	EndGlobalSection
+EndGlobal
