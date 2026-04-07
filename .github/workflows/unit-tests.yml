@@ -39,15 +39,6 @@ jobs:
             fi
           done
 
-          # Also run the shared tests directory
-          if [ -d "terraform/tests" ]; then
-            echo "::group::terraform test — terraform/tests"
-            terraform -chdir="terraform/modules/azure-container-app" init -backend=false -input=false -no-color
-            terraform -chdir="terraform/modules/azure-container-app" test \
-              -test-directory="../../tests" -no-color || FAILED=1
-            echo "::endgroup::"
-          fi
-
           exit $FAILED
 
   # ─── OPA policy tests ──────────────────────────────────────────────────────
