@@ -1,5 +1,7 @@
 # Apex Platform
 
+<img src=".github/assets/logo.png" alt="Apex Platform" width="300" />
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Terraform](https://img.shields.io/badge/Terraform-%3E%3D1.5-blue.svg)](https://www.terraform.io/)
 [![Azure Provider](https://img.shields.io/badge/azurerm-%3E%3D3.80-623CE4.svg)](https://registry.terraform.io/providers/hashicorp/azurerm/latest)
