@@ -2,5 +2,5 @@ pytest>=8.0
 pytest-cov>=5.0
 six>=1.16
 azure-identity>=1.15
-azure-mgmt-policyinsights>=1.1
+azure-mgmt-policyinsights>=1.0.0
 azure-mgmt-authorization>=4.0
