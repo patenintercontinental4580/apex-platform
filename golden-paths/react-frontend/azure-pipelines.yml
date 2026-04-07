@@ -1,0 +1,15 @@
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - golden-paths/react-frontend/**
+
+extends:
+  template: pipelines/templates/azure-devops/react-frontend.yml@pipeline-templates
+  parameters:
+    appLocation: 'golden-paths/react-frontend'
+    outputLocation: 'dist'
+    azureSubscription: 'apex-platform-prod'
+    staticWebAppName: 'stapp-apex-frontend-prod-uks-01'

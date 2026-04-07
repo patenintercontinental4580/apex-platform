@@ -1,0 +1,10 @@
+include:
+  - project: 'platform/pipeline-templates'
+    ref: main
+    file: '/pipelines/templates/gitlab-ci/react-frontend.yml'
+
+variables:
+  APP_LOCATION: "golden-paths/react-frontend"
+  OUTPUT_LOCATION: "dist"
+  STATIC_WEB_APP_NAME: "stapp-apex-frontend-prod-uks-01"
+  AZURE_SUBSCRIPTION_ID: $AZURE_SUBSCRIPTION_ID

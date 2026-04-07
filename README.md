@@ -25,14 +25,17 @@ This repository contains **production-ready Terraform modules, pipeline template
 
 ### 🏗️ Infrastructure as Code (Terraform Modules)
 
-Six reusable, battle-tested Terraform modules for common Azure workloads:
+Nine reusable, battle-tested Terraform modules for common Azure workloads:
 
 - **`azure-container-app`** — Serverless containerized applications with auto-scaling, managed identity, Application Insights integration
 - **`azure-function-app`** — Event-driven serverless compute with VNet integration and Key Vault references
-- **`azure-key-vault`** — Secure secrets and encryption key management with RBAC and diagnostic logging
-- **`azure-spoke-vnet`** — Hub-and-spoke network topology with NSGs, subnet delegation, and VNet peering
-- **`azure-sql-database`** — Managed relational databases with elastic pools, geo-replication, and Azure AD integration
-- **`azure-static-web-app`** — Globally distributed static sites with API routing and enterprise CDN
+- **`azure-key-vault`** — Secure secrets and encryption key management with RBAC and private endpoints
+- **`azure-spoke-vnet`** — Hub-and-spoke network topology with NSGs, route tables, and bidirectional VNet peering
+- **`azure-sql-database`** — Managed relational databases with private endpoint, geo-replication, and Entra auth
+- **`azure-static-web-app`** — Globally distributed static sites with custom domains
+- **`azure-budget`** — Cost governance with 50%/75%/90% alert thresholds
+- **`azure-secret-rotation`** — Automated Key Vault secret rotation via Event Grid + Function App
+- **`azure-landing-zone`** — Composes spoke VNet + budget + policy assignments for a team
 
 All modules include:
 - ✅ Input validation and guardrails
@@ -105,57 +108,66 @@ Built-in support for:
 ```
 apex-platform/
 ├── terraform/
-│   ├── modules/                    # Reusable Terraform modules
+│   ├── modules/                    # 9 reusable Terraform modules
 │   │   ├── azure-container-app/
 │   │   ├── azure-function-app/
 │   │   ├── azure-key-vault/
 │   │   ├── azure-spoke-vnet/
 │   │   ├── azure-sql-database/
-│   │   └── azure-static-web-app/
-│   ├── environments/               # Environment-specific deployments (dev/staging/prod)
-│   └── tests/                      # Terratest integration tests
+│   │   ├── azure-static-web-app/
+│   │   ├── azure-budget/
+│   │   ├── azure-secret-rotation/
+│   │   └── azure-landing-zone/
+│   ├── environments/
+│   │   ├── global/                 # Management groups, AAD groups, policies
+│   │   ├── connectivity/           # Hub VNet, Firewall, Bastion, DNS
+│   │   └── landing-zones/
+│   │       ├── production/orders/
+│   │       └── non-production/orders/
+│   └── tests/                      # Terratest + native TF tests
 │
 ├── pipelines/
 │   ├── templates/
-│   │   ├── azure-devops/           # Azure DevOps YAML templates
-│   │   └── gitlab-ci/              # GitLab CI templates
-│   └── shared/
-│       ├── steps/                  # Shared pipeline steps
-│       └── variables/              # Shared variable groups
+│   │   ├── azure-devops/           # dotnet, python, react, terraform, drift-detection
+│   │   └── gitlab-ci/              # mirrored GitLab CI templates
+│   └── shared/steps/               # deploy-container-app, run-integration-tests, backup-state
 │
 ├── backstage/
-│   ├── templates/                  # Backstage scaffolder templates
-│   ├── plugins/                    # Custom Backstage plugins
-│   └── catalog/                    # Catalog entity definitions
+│   ├── templates/                  # dotnet-microservice, python-django-api, react-frontend
+│   ├── catalog/                    # platform-systems.yaml
+│   └── app-config.yaml
 │
 ├── golden-paths/
-│   ├── dotnet-microservice/        # .NET 8 golden path skeleton
-│   ├── python-django-api/          # Python Django golden path skeleton
-│   └── react-frontend/             # React/Vite golden path skeleton
+│   ├── dotnet-microservice/        # .NET 8 + OpenTelemetry + MSAL
+│   ├── python-django-api/          # Python 3.12 + Django + gunicorn
+│   └── react-frontend/             # React 18 + Vite + MSAL
 │
 ├── policies/
-│   ├── azure-policy/               # Custom Azure Policy definitions (JSON)
-│   └── opa/                        # Open Policy Agent Rego policies
+│   ├── azure-policy/               # require-mandatory-tags, enforce-diagnostic-settings,
+│   │                               # deny-public-storage, allowed-regions
+│   └── opa/                        # terraform-plan-policy.rego, pipeline-policy.rego
 │
 ├── scripts/
-│   ├── setup/                      # Initial setup scripts
-│   ├── tools/                      # Utility scripts
-│   └── compliance/                 # Compliance evidence scripts
+│   ├── setup/                      # bootstrap.sh + bootstrap.ps1
+│   ├── tools/                      # create-team-landing-zone.sh
+│   └── compliance/                 # generate-evidence-report.py, audit-rbac-assignments.py
 │
 ├── docs/
-│   ├── architecture/               # Architecture Decision Records (ADRs)
-│   ├── adr/                        # ADR template in MADR format
-│   └── runbooks/                   # Operational runbooks
+│   ├── adr/                        # 001-terraform-over-bicep, 002-backstage, 003-hub-spoke
+│   ├── architecture/               # platform-overview, network-topology, identity-model
+│   ├── runbooks/                   # drift-remediation, secret-rotation-failure, pipeline-triage
+│   └── PLATFORM-CHARTER.md
 │
 ├── .github/
-│   ├── workflows/                  # GitHub Actions workflows
-│   └── CODEOWNERS                  # Team ownership assignments
+│   ├── workflows/terraform-lint.yml
+│   ├── CODEOWNERS
+│   └── PULL_REQUEST_TEMPLATE.md
 │
-├── PLATFORM-CONTRACT.md            # Platform API contract (module versions, templates)
-├── CHANGELOG.md                    # Platform changelog
-├── CONTRIBUTING.md                 # Contribution guidelines
-├── LICENSE                         # MIT License
-└── README.md                       # This file
+├── PLATFORM-CONTRACT.md            # Module/template versions and SLA commitments
+├── CHANGELOG.md
+├── CONTRIBUTING.md
+├── LICENSE
+└── README.md
 ```
 
 ## 🚀 Quick Start
@@ -164,50 +176,49 @@ apex-platform/
 
 - **Terraform** ≥ 1.5
 - **Azure CLI** ≥ 2.50
-- **Azure Subscription** with appropriate permissions
-- **Git** for cloning the repository
+- **Azure Subscription** with Owner or Contributor + User Access Administrator
+- **Git**
 
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/apex-platform/apex-platform.git
+git clone https://github.com/abhishekbagde/apex-platform.git
 cd apex-platform
 ```
 
-### 2. Initialize Terraform
+### 2. Bootstrap the Platform
+
+The bootstrap script creates the Terraform state storage account, initialises the global environment, and prints next steps:
 
 ```bash
-# Navigate to an environment
-cd terraform/environments/dev
+# Linux/macOS
+chmod +x scripts/setup/bootstrap.sh
+./scripts/setup/bootstrap.sh --subscription-id <your-subscription-id>
 
-# Initialize Terraform
+# Windows (PowerShell 7+)
+.\scripts\setup\bootstrap.ps1 -SubscriptionId <your-subscription-id>
+```
+
+### 3. Deploy Connectivity
+
+```bash
+cd terraform/environments/connectivity
 terraform init
-
-# Format and validate
-terraform fmt -recursive
-terraform validate
+terraform plan -out=tfplan
+terraform apply tfplan
 ```
 
-### 3. Review and Customize Variables
-
-Each environment has a `terraform.tfvars` file. Customize it for your organization:
-
-```hcl
-application_name = "myapp"
-environment      = "dev"
-location         = "uksouth"
-team             = "platform-eng"
-cost_centre      = "engineering"
-```
-
-### 4. Plan and Apply
+### 4. Create a Team Landing Zone
 
 ```bash
-# Review the plan
-terraform plan -out=tfplan
+# Scaffold a new landing zone
+./scripts/tools/create-team-landing-zone.sh \
+  --team orders \
+  --env production \
+  --vnet-cidr 10.10.0.0/22
 
-# Apply the configuration
-terraform apply tfplan
+cd terraform/environments/landing-zones/production/orders
+terraform init && terraform apply
 ```
 
 ### 5. Explore the Modules
@@ -224,12 +235,15 @@ Each module in `terraform/modules/` includes:
 
 | Module | Purpose | Key Features |
 |--------|---------|--------------|
-| `azure-container-app` | Serverless containers | Auto-scaling, managed identity, Application Insights |
-| `azure-function-app` | Event-driven compute | Flex consumption, VNet integration, Key Vault refs |
-| `azure-key-vault` | Secrets management | RBAC, private endpoints, diagnostic logging |
-| `azure-spoke-vnet` | Network topology | NSGs, subnet delegation, VNet peering |
-| `azure-sql-database` | Managed databases | Elastic pools, geo-replication, Azure AD auth |
-| `azure-static-web-app` | Static content delivery | Custom domains, API routing, enterprise CDN |
+| `azure-container-app` | Serverless containers | Auto-scaling, managed identity, prod guardrail (min_replicas ≥ 2) |
+| `azure-function-app` | Event-driven compute | Y1/EP1 plans, runtime switch, Key Vault refs |
+| `azure-key-vault` | Secrets management | RBAC auth, private endpoint, `for_each` role assignments |
+| `azure-spoke-vnet` | Network topology | 4 subnets via `cidrsubnet()`, NSGs, UDRs, bidirectional peering |
+| `azure-sql-database` | Managed databases | Private endpoint, Entra admin, prod backup guardrail |
+| `azure-static-web-app` | Static content delivery | `azurerm_static_site`, optional custom domain |
+| `azure-budget` | Cost governance | 50%/75% actual + 90% forecast alerts |
+| `azure-secret-rotation` | Automated rotation | Function App + Event Grid `SecretNearExpiry` subscription |
+| `azure-landing-zone` | Team environment | Composes spoke-vnet + budget + policy assignments |
 
 Each module follows these conventions:
 
@@ -344,18 +358,13 @@ opa test opa/ -v
 
 ### Architecture Decision Records (ADRs)
 
-Located in `docs/adr/`, these document key architectural decisions:
+Located in `docs/adr/`:
 
-```bash
-docs/adr/
-├── 0001-naming-convention.md
-├── 0002-hub-spoke-network.md
-├── 0003-rbac-strategy.md
-├── 0004-finops-governance.md
-└── ...
-```
-
-Read the [MADR](https://adr.github.io/madr/) format guide for more details.
+| ADR | Decision |
+|-----|---------|
+| [001-terraform-over-bicep](docs/adr/001-terraform-over-bicep.md) | Terraform chosen for multi-cloud portability and ecosystem maturity |
+| [002-backstage-for-portal](docs/adr/002-backstage-for-portal.md) | Backstage chosen over Cortex/Port for open source + plugin model |
+| [003-hub-spoke-over-vwan](docs/adr/003-hub-spoke-over-vwan.md) | Hub-and-spoke chosen for deterministic routing and lower cost |
 
 ### On-Boarding Guide
 

@@ -1,0 +1,11 @@
+include:
+  - project: 'platform/pipeline-templates'
+    ref: main
+    file: '/pipelines/templates/gitlab-ci/python-api.yml'
+
+variables:
+  APP_NAME: "python-django-api"
+  AZURE_WEBAPP_NAME: "app-orders-api-production-uks-01"
+  PYTHON_VERSION: "3.12"
+  AZURE_SUBSCRIPTION_ID: $AZURE_SUBSCRIPTION_ID
+  SONAR_PROJECT_KEY: "apex-platform_python-django-api"

@@ -1,0 +1,54 @@
+{
+  "name": "allowed-regions",
+  "type": "Microsoft.Authorization/policyDefinitions",
+  "properties": {
+    "displayName": "Allowed locations for resources",
+    "description": "This policy restricts the locations where resources can be deployed to uksouth, ukwest, and westeurope.",
+    "policyType": "Custom",
+    "mode": "Indexed",
+    "metadata": {
+      "version": "1.0.0",
+      "category": "General"
+    },
+    "parameters": {
+      "allowedLocations": {
+        "type": "Array",
+        "defaultValue": ["uksouth", "ukwest", "westeurope"],
+        "metadata": {
+          "displayName": "Allowed locations",
+          "description": "The list of locations that can be specified when deploying resources",
+          "strongType": "location"
+        }
+      },
+      "effect": {
+        "type": "String",
+        "defaultValue": "Deny",
+        "allowedValues": ["Audit", "Deny", "Disabled"],
+        "metadata": {
+          "displayName": "Effect"
+        }
+      }
+    },
+    "policyRule": {
+      "if": {
+        "allOf": [
+          {
+            "field": "location",
+            "notIn": "[parameters('allowedLocations')]"
+          },
+          {
+            "field": "location",
+            "notEquals": "global"
+          },
+          {
+            "field": "type",
+            "notEquals": "Microsoft.AzureActiveDirectory/b2cDirectories"
+          }
+        ]
+      },
+      "then": {
+        "effect": "[parameters('effect')]"
+      }
+    }
+  }
+}
