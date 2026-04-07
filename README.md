@@ -278,6 +278,6 @@ MIT. See [LICENSE](LICENSE) for details.
 
 ## About
 
-Built by [Abhishek Bagde](https://github.com/abhishekbagde) — cloud architect and platform engineer with a focus on Azure, infrastructure automation, and developer experience.
+Built by [Abhishek Bagde](https://github.com/abhishekbagde) — Senior Software Engineer focus on Azure, infrastructure automation, and developer experience.
 
 Issues and pull requests are welcome.
