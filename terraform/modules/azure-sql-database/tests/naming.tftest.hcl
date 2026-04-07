@@ -1,5 +1,14 @@
 # Tests for azure-sql-database module — runs with `terraform test` (no Azure needed)
-mock_provider "azurerm" {}
+mock_provider "azurerm" {
+  mock_data "azurerm_client_config" {
+    defaults = {
+      client_id       = "00000000-0000-0000-0000-000000000001"
+      tenant_id       = "00000000-0000-0000-0000-000000000002"
+      subscription_id = "00000000-0000-0000-0000-000000000003"
+      object_id       = "00000000-0000-0000-0000-000000000004"
+    }
+  }
+}
 
 variables {
   application_name           = "orders"
@@ -37,7 +46,8 @@ run "production_backup_guardrail_fails" {
     geo_redundant_backup  = false
   }
 
-  expect_failures = [azurerm_mssql_database.this]
+  # Precondition is on azurerm_mssql_server, not azurerm_mssql_database
+  expect_failures = [azurerm_mssql_server.this]
 }
 
 run "production_with_correct_backup_passes" {

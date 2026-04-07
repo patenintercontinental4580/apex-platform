@@ -1,5 +1,14 @@
 # Tests for azure-key-vault module — runs with `terraform test` (no Azure needed)
-mock_provider "azurerm" {}
+mock_provider "azurerm" {
+  mock_data "azurerm_client_config" {
+    defaults = {
+      client_id       = "00000000-0000-0000-0000-000000000001"
+      tenant_id       = "00000000-0000-0000-0000-000000000002"
+      subscription_id = "00000000-0000-0000-0000-000000000003"
+      object_id       = "00000000-0000-0000-0000-000000000004"
+    }
+  }
+}
 
 variables {
   application_name           = "orders"

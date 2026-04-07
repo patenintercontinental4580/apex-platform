@@ -15,7 +15,7 @@ run "function_app_name_follows_convention" {
   command = plan
 
   assert {
-    condition     = output.function_app_name == "func-orders-prod-uks-01"
+    condition     = output.function_app_name == "func-rot-orders-prod-uks"
     error_message = "Function App name incorrect: got ${output.function_app_name}"
   }
 }

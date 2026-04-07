@@ -9,7 +9,7 @@ variables {
   location                   = "uksouth"
   instance_number            = 1
   runtime_stack              = "dotnet-isolated"
-  runtime_version            = "8"
+  runtime_version            = "8.0"
   log_analytics_workspace_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.OperationalInsights/workspaces/log-platform"
 }
 
