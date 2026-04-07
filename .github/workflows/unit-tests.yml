@@ -109,12 +109,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: "npm"
-          cache-dependency-path: golden-paths/react-frontend/package-lock.json
 
       - name: Install dependencies
         working-directory: golden-paths/react-frontend
-        run: npm ci
+        run: npm install
 
       - name: Run Vitest
         working-directory: golden-paths/react-frontend

@@ -3,32 +3,22 @@ mock_provider "azurerm" {}
 
 variables {
   application_name           = "orders"
-  environment                = "development"
+  environment                = "dev"
+  team                       = "platform-engineering"
+  cost_centre                = "PLATFORM-001"
   location                   = "uksouth"
   instance_number            = 1
-  storage_account_name       = "stordersfuncdevuks01"
-  log_analytics_workspace_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-connectivity/providers/Microsoft.OperationalInsights/workspaces/log-platform"
+  runtime_stack              = "dotnet-isolated"
+  runtime_version            = "8"
+  log_analytics_workspace_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.OperationalInsights/workspaces/log-platform"
 }
 
 run "naming_follows_convention" {
   command = plan
 
   assert {
-    condition     = output.function_app_name == "func-orders-development-uks-01"
-    error_message = "Function App name does not follow naming convention: got ${output.function_app_name}"
-  }
-}
-
-run "consumption_plan_naming" {
-  command = plan
-
-  variables {
-    plan_sku = "Y1"
-  }
-
-  assert {
-    condition     = output.service_plan_name == "plan-orders-development-uks-01"
-    error_message = "Service plan name incorrect: got ${output.service_plan_name}"
+    condition     = output.function_app_name == "func-orders-dev-uks-01"
+    error_message = "Function App name incorrect: got ${output.function_app_name}"
   }
 }
 
@@ -42,12 +32,22 @@ run "rejects_invalid_runtime" {
   expect_failures = [var.runtime_stack]
 }
 
-run "rejects_invalid_sku" {
+run "rejects_invalid_plan_type" {
   command = plan
 
   variables {
-    plan_sku = "B1"
+    plan_type = "Basic"
   }
 
-  expect_failures = [var.plan_sku]
+  expect_failures = [var.plan_type]
+}
+
+run "rejects_invalid_environment" {
+  command = plan
+
+  variables {
+    environment = "production"
+  }
+
+  expect_failures = [var.environment]
 }

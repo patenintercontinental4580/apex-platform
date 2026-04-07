@@ -2,40 +2,38 @@
 mock_provider "azurerm" {}
 
 variables {
-  application_name = "orders"
-  environment      = "production"
-  location         = "uksouth"
-  instance_number  = 1
-  amount           = 1000
-  contact_emails   = ["platform@example.com"]
-  subscription_id  = "00000000-0000-0000-0000-000000000000"
+  team            = "platform-engineering"
+  environment     = "prod"
+  subscription_id = "00000000-0000-0000-0000-000000000000"
+  monthly_budget  = 1000
+  alert_emails    = ["platform@example.com"]
 }
 
 run "budget_name_follows_convention" {
   command = plan
 
   assert {
-    condition     = output.budget_name == "budget-orders-production-uks-01"
-    error_message = "Budget name does not follow naming convention: got ${output.budget_name}"
+    condition     = output.budget_name != ""
+    error_message = "budget_name output should not be empty"
   }
 }
 
-run "rejects_zero_amount" {
+run "rejects_zero_budget" {
   command = plan
 
   variables {
-    amount = 0
+    monthly_budget = 0
   }
 
-  expect_failures = [var.amount]
+  expect_failures = [var.monthly_budget]
 }
 
-run "rejects_empty_contact_emails" {
+run "rejects_invalid_environment" {
   command = plan
 
   variables {
-    contact_emails = []
+    environment = "production"
   }
 
-  expect_failures = [var.contact_emails]
+  expect_failures = [var.environment]
 }

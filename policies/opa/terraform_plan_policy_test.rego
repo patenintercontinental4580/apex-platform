@@ -1,6 +1,7 @@
 package terraform.plan_test
 
 import future.keywords.if
+import data.terraform.plan
 
 # ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -14,7 +15,7 @@ mock_plan_with_public_ip := {
                 "allocation_method": "Static",
                 "tags": {
                     "ApplicationName": "orders",
-                    "Environment":     "production",
+                    "Environment":     "prod",
                     "Team":            "platform",
                     "CostCentre":      "PLATFORM-001"
                 }
@@ -62,7 +63,26 @@ mock_plan_compliant := {
             "after": {
                 "tags": {
                     "ApplicationName": "orders",
-                    "Environment":     "production",
+                    "Environment":     "prod",
+                    "Team":            "platform",
+                    "CostCentre":      "PLATFORM-001"
+                }
+            }
+        }
+    }]
+}
+
+mock_plan_public_storage := {
+    "resource_changes": [{
+        "address": "azurerm_storage_account.this",
+        "type":    "azurerm_storage_account",
+        "change": {
+            "actions": ["create"],
+            "after": {
+                "public_network_access_enabled": true,
+                "tags": {
+                    "ApplicationName": "orders",
+                    "Environment":     "prod",
                     "Team":            "platform",
                     "CostCentre":      "PLATFORM-001"
                 }
@@ -74,49 +94,26 @@ mock_plan_compliant := {
 # ─── Tests ───────────────────────────────────────────────────────────────────
 
 test_deny_public_ip if {
-    import data.terraform.plan
     msgs := plan.deny with input as mock_plan_with_public_ip
     count([m | m := msgs[_]; contains(m, "Public IP")]) > 0
 }
 
 test_deny_missing_tags if {
-    import data.terraform.plan
     msgs := plan.deny with input as mock_plan_missing_tags
     count([m | m := msgs[_]; contains(m, "missing required tags")]) > 0
 }
 
 test_deny_owner_at_subscription if {
-    import data.terraform.plan
     msgs := plan.deny with input as mock_plan_owner_at_subscription
     count([m | m := msgs[_]; contains(m, "Owner role assignment")]) > 0
 }
 
 test_compliant_plan_has_no_denies if {
-    import data.terraform.plan
     msgs := plan.deny with input as mock_plan_compliant
     count(msgs) == 0
 }
 
 test_warn_public_storage if {
-    import data.terraform.plan
-    plan_with_public_storage := {
-        "resource_changes": [{
-            "address": "azurerm_storage_account.this",
-            "type":    "azurerm_storage_account",
-            "change": {
-                "actions": ["create"],
-                "after": {
-                    "public_network_access_enabled": true,
-                    "tags": {
-                        "ApplicationName": "orders",
-                        "Environment":     "production",
-                        "Team":            "platform",
-                        "CostCentre":      "PLATFORM-001"
-                    }
-                }
-            }
-        }]
-    }
-    msgs := plan.warn with input as plan_with_public_storage
+    msgs := plan.warn with input as mock_plan_public_storage
     count([m | m := msgs[_]; contains(m, "public network access")]) > 0
 }
