@@ -1,194 +1,148 @@
-# Apex Platform: A Production-Grade Internal Developer Platform on Azure
+# Apex Platform
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Terraform](https://img.shields.io/badge/Terraform-≥1.5-blue.svg)](https://www.terraform.io/)
-[![Azure Provider](https://img.shields.io/badge/Azure%20Provider-≥3.0-green.svg)](https://registry.terraform.io/providers/hashicorp/azurerm/latest)
+[![Terraform](https://img.shields.io/badge/Terraform-%3E%3D1.5-blue.svg)](https://www.terraform.io/)
+[![Azure Provider](https://img.shields.io/badge/azurerm-%3E%3D3.80-623CE4.svg)](https://registry.terraform.io/providers/hashicorp/azurerm/latest)
+[![Unit Tests](https://github.com/abhishekbagde/apex-platform/actions/workflows/unit-tests.yml/badge.svg)](https://github.com/abhishekbagde/apex-platform/actions/workflows/unit-tests.yml)
 
-> **The companion repository for the book "Platform Engineering on Azure" by Abhishek Bagde**
+Apex Platform is a production-grade Internal Developer Platform (IDP) built on Microsoft Azure. It provides a set of reusable Terraform modules, CI/CD pipeline templates, policy definitions, and golden path starters that engineering teams can use to provision infrastructure, enforce organisational standards, and ship services faster without reinventing the wheel each time.
 
-Apex Platform is a production-grade **Internal Developer Platform (IDP)** implemented on Microsoft Azure. It demonstrates enterprise-scale platform engineering practices using Infrastructure as Code (IaC), GitOps principles, and modern cloud-native architecture patterns.
+The design is opinionated where it needs to be — naming conventions, tagging, network topology, secret management — and flexible everywhere else.
 
-## 📚 What is Apex Platform?
+## What is included
 
-Apex Platform is a complete reference architecture for building an Internal Developer Platform that enables engineering teams to:
+### Terraform Modules
 
-- **Self-serve infrastructure provisioning** through golden paths and scaffolder templates
-- **Enforce organizational standards** via Azure Policies and OPA (Open Policy Agent)
-- **Automate deployment pipelines** with reusable CI/CD templates for Azure DevOps and GitLab
-- **Discover and manage services** through the Backstage Software Catalogue
-- **Scale securely** with built-in compliance, tagging governance, and audit trails
-- **Accelerate time-to-value** with curated starter templates for .NET, Python, and React applications
+Nine reusable modules covering the most common Azure workloads:
 
-This repository contains **production-ready Terraform modules, pipeline templates, policy definitions, and documentation** — everything you need to build and operate a modern platform on Azure.
+| Module | Purpose |
+|--------|---------|
+| `azure-container-app` | Containerised workloads with auto-scaling, managed identity, and Application Insights |
+| `azure-function-app` | Event-driven compute with Key Vault references and VNet integration |
+| `azure-key-vault` | Secrets and encryption keys with RBAC authorisation and private endpoints |
+| `azure-spoke-vnet` | Hub-and-spoke networking with NSGs, route tables, and bidirectional VNet peering |
+| `azure-sql-database` | Managed SQL with private endpoint, Entra admin option, and backup guardrails |
+| `azure-static-web-app` | Globally distributed static sites with optional custom domain |
+| `azure-budget` | Subscription cost budgets with 50%, 75%, and 90% alert thresholds |
+| `azure-secret-rotation` | Automated Key Vault secret rotation via Event Grid and Function App |
+| `azure-landing-zone` | Composes spoke VNet, budget, and policy assignments for a team environment |
 
-## 🎯 Key Features
+Every module follows the same structure: `main.tf`, `variables.tf`, `outputs.tf`, `locals.tf`, `versions.tf`, a README, and working examples under `examples/`. Input validation and production guardrails (lifecycle preconditions) are built in.
 
-### 🏗️ Infrastructure as Code (Terraform Modules)
+### CI/CD Pipeline Templates
 
-Nine reusable, battle-tested Terraform modules for common Azure workloads:
+Reusable pipeline templates for both Azure DevOps and GitLab CI:
 
-- **`azure-container-app`** — Serverless containerized applications with auto-scaling, managed identity, Application Insights integration
-- **`azure-function-app`** — Event-driven serverless compute with VNet integration and Key Vault references
-- **`azure-key-vault`** — Secure secrets and encryption key management with RBAC and private endpoints
-- **`azure-spoke-vnet`** — Hub-and-spoke network topology with NSGs, route tables, and bidirectional VNet peering
-- **`azure-sql-database`** — Managed relational databases with private endpoint, geo-replication, and Entra auth
-- **`azure-static-web-app`** — Globally distributed static sites with custom domains
-- **`azure-budget`** — Cost governance with 50%/75%/90% alert thresholds
-- **`azure-secret-rotation`** — Automated Key Vault secret rotation via Event Grid + Function App
-- **`azure-landing-zone`** — Composes spoke VNet + budget + policy assignments for a team
+- Terraform plan-on-PR, apply-on-merge with state backup
+- Drift detection on a cron schedule with Teams notification
+- Application pipelines for .NET, Python, and React with Docker build, security scanning, and staged deployments
+- Shared step libraries for common operations
 
-All modules include:
-- ✅ Input validation and guardrails
-- ✅ Sensible defaults aligned with Microsoft Well-Architected Framework
-- ✅ Tagging strategies for FinOps governance
-- ✅ Diagnostic settings for compliance and observability
-- ✅ Complete examples (basic and advanced configurations)
-- ✅ Comprehensive README documentation
+### Policy as Code
 
-### 🚀 CI/CD Pipelines
+- Azure Policy definitions for mandatory tagging, diagnostic settings, public storage denial, and region restrictions
+- OPA policies for validating Terraform plans and CI/CD pipeline structure before they reach Azure
 
-Reusable pipeline templates for:
+### Golden Path Templates
 
-- **Azure DevOps** — Plan-on-PR, apply-on-merge workflows with Terraform linting and policy validation
-- **GitLab CI** — Multi-stage pipelines with artifact caching and environment promotions
-- Automated Terraform validation (`terraform fmt`, `terraform validate`, `tflint`, Checkov)
-- Workload Identity Federation integration for keyless authentication
-- Shared variable groups and secure credential management
+Working application starters for the three most common service types:
 
-### 📋 Platform Policies
+- `.NET 8 microservice` — ASP.NET Core, OpenTelemetry, health checks, MSAL, structured logging via Serilog
+- `Python Django API` — Django REST Framework, gunicorn, Azure Identity for Key Vault, health checks
+- `React/Vite frontend` — React 18, MSAL authentication, TypeScript, optimised builds for Static Web App
 
-Azure Policies and OPA rules to enforce:
+Each golden path includes a `catalog-info.yaml` for Backstage, an `azure-pipelines.yml`, a `.gitlab-ci.yml`, and a `terraform/` directory that calls the platform modules.
 
-- **Tagging standards** — Mandatory resource tags (team, cost-centre, environment, etc.)
-- **SKU compliance** — Approved VM sizes, storage types, and database editions
-- **Security controls** — Private endpoints, encryption at rest, RBAC requirements
-- **Diagnostic settings** — Mandatory audit logging for compliance
-- **Naming conventions** — Standardized resource names across the organization
+### Backstage Integration
 
-### 🎨 Backstage Integration
+Scaffolder templates for all three golden paths, a platform systems catalogue entry, and an `app-config.yaml` wiring up Microsoft auth, TechDocs, and Azure DevOps proxy.
 
-**Backstage Software Catalogue** configuration including:
+### Compliance Scripts
 
-- Pre-built scaffolder templates for .NET, Python, and React golden paths
-- Automatic service registration and documentation
-- Custom Backstage actions for generating module skeletons
-- TechDocs site for searchable platform documentation
+Two Python scripts for ongoing compliance work:
 
-### 🏆 Golden Path Templates
+- `audit-rbac-assignments.py` — Lists RBAC role assignments and flags direct User assignments (should be group-based)
+- `generate-evidence-report.py` — Queries Azure Policy compliance states and produces a JSON evidence report
 
-Starter skeletons for common application types:
+### Documentation
 
-- **`.NET 8 Microservice`** — Minimal container image with ASP.NET Core, health checks, structured logging
-- **`Python Django API`** — Multi-stage Docker build, environment configuration, database migrations
-- **`React/Vite Frontend`** — Client-side routing, environment variables, optimized builds for CDN deployment
+- Architecture Decision Records for the three main design choices (Terraform over Bicep, Backstage over alternatives, hub-and-spoke over vWAN)
+- Architecture guides covering platform layers, network topology, and the identity model
+- Operational runbooks for drift remediation, secret rotation failure, and pipeline triage
+- A platform charter covering operating principles and support tiers
 
-### 📖 Documentation
-
-Comprehensive documentation covering:
-
-- **Architecture Decision Records (ADRs)** — Design rationale for platform patterns
-- **Module Authoring Guide** — How to extend the platform with custom modules
-- **Naming Convention Reference** — Resource naming patterns and region codes
-- **On-boarding Guide** — Getting started for teams and consumers
-- **FinOps Strategy** — Cost governance and tagging taxonomy
-- **Operational Runbooks** — Troubleshooting and disaster recovery procedures
-
-### ✅ Governance & Compliance
-
-Built-in support for:
-
-- **Azure Policy Initiative Assignments** — Enforce organizational standards
-- **Cost Management Budgets** — Alert thresholds and spending governance
-- **Diagnostic Settings** — Centralized logging to Log Analytics
-- **RBAC** — Role-based access control with managed identities
-- **Audit Trails** — Full traceability of infrastructure changes via Git history and Azure Activity Logs
-
-## 🗂️ Repository Structure
+## Repository Structure
 
 ```
 apex-platform/
 ├── terraform/
 │   ├── modules/                    # 9 reusable Terraform modules
-│   │   ├── azure-container-app/
-│   │   ├── azure-function-app/
-│   │   ├── azure-key-vault/
-│   │   ├── azure-spoke-vnet/
-│   │   ├── azure-sql-database/
-│   │   ├── azure-static-web-app/
-│   │   ├── azure-budget/
-│   │   ├── azure-secret-rotation/
-│   │   └── azure-landing-zone/
 │   ├── environments/
 │   │   ├── global/                 # Management groups, AAD groups, policies
 │   │   ├── connectivity/           # Hub VNet, Firewall, Bastion, DNS
-│   │   └── landing-zones/
-│   │       ├── production/orders/
-│   │       └── non-production/orders/
-│   └── tests/                      # Terratest + native TF tests
+│   │   └── landing-zones/          # Production and non-production examples
+│   └── tests/                      # Terratest integration tests (requires Azure)
 │
 ├── pipelines/
 │   ├── templates/
-│   │   ├── azure-devops/           # dotnet, python, react, terraform, drift-detection
-│   │   └── gitlab-ci/              # mirrored GitLab CI templates
-│   └── shared/steps/               # deploy-container-app, run-integration-tests, backup-state
+│   │   ├── azure-devops/
+│   │   └── gitlab-ci/
+│   └── shared/steps/
 │
 ├── backstage/
-│   ├── templates/                  # dotnet-microservice, python-django-api, react-frontend
-│   ├── catalog/                    # platform-systems.yaml
+│   ├── templates/
+│   ├── catalog/
 │   └── app-config.yaml
 │
 ├── golden-paths/
-│   ├── dotnet-microservice/        # .NET 8 + OpenTelemetry + MSAL
-│   ├── python-django-api/          # Python 3.12 + Django + gunicorn
-│   └── react-frontend/             # React 18 + Vite + MSAL
+│   ├── dotnet-microservice/
+│   ├── python-django-api/
+│   └── react-frontend/
 │
 ├── policies/
-│   ├── azure-policy/               # require-mandatory-tags, enforce-diagnostic-settings,
-│   │                               # deny-public-storage, allowed-regions
-│   └── opa/                        # terraform-plan-policy.rego, pipeline-policy.rego
+│   ├── azure-policy/
+│   └── opa/
 │
 ├── scripts/
-│   ├── setup/                      # bootstrap.sh + bootstrap.ps1
+│   ├── setup/                      # bootstrap.sh, bootstrap.ps1
 │   ├── tools/                      # create-team-landing-zone.sh
 │   └── compliance/                 # generate-evidence-report.py, audit-rbac-assignments.py
 │
 ├── docs/
-│   ├── adr/                        # 001-terraform-over-bicep, 002-backstage, 003-hub-spoke
-│   ├── architecture/               # platform-overview, network-topology, identity-model
-│   ├── runbooks/                   # drift-remediation, secret-rotation-failure, pipeline-triage
+│   ├── adr/
+│   ├── architecture/
+│   ├── runbooks/
 │   └── PLATFORM-CHARTER.md
 │
 ├── .github/
-│   ├── workflows/terraform-lint.yml
-│   ├── CODEOWNERS
-│   └── PULL_REQUEST_TEMPLATE.md
+│   └── workflows/
+│       ├── unit-tests.yml          # Terraform, OPA, Python, React tests
+│       └── terraform-lint.yml
 │
-├── PLATFORM-CONTRACT.md            # Module/template versions and SLA commitments
+├── PLATFORM-CONTRACT.md
 ├── CHANGELOG.md
 ├── CONTRIBUTING.md
 ├── LICENSE
 └── README.md
 ```
 
-## 🚀 Quick Start
+## Prerequisites
 
-### Prerequisites
+- Terraform >= 1.5
+- Azure CLI >= 2.50
+- An Azure subscription with Owner or Contributor + User Access Administrator
+- Git
 
-- **Terraform** ≥ 1.5
-- **Azure CLI** ≥ 2.50
-- **Azure Subscription** with Owner or Contributor + User Access Administrator
-- **Git**
+## Quick Start
 
-### 1. Clone the Repository
+**Clone the repository:**
 
 ```bash
 git clone https://github.com/abhishekbagde/apex-platform.git
 cd apex-platform
 ```
 
-### 2. Bootstrap the Platform
-
-The bootstrap script creates the Terraform state storage account, initialises the global environment, and prints next steps:
+**Bootstrap the platform** (creates the Terraform state storage account and initialises the global environment):
 
 ```bash
 # Linux/macOS
@@ -199,7 +153,7 @@ chmod +x scripts/setup/bootstrap.sh
 .\scripts\setup\bootstrap.ps1 -SubscriptionId <your-subscription-id>
 ```
 
-### 3. Deploy Connectivity
+**Deploy connectivity** (hub VNet, Firewall, Bastion, DNS):
 
 ```bash
 cd terraform/environments/connectivity
@@ -208,10 +162,9 @@ terraform plan -out=tfplan
 terraform apply tfplan
 ```
 
-### 4. Create a Team Landing Zone
+**Create a team landing zone:**
 
 ```bash
-# Scaffold a new landing zone
 ./scripts/tools/create-team-landing-zone.sh \
   --team orders \
   --env production \
@@ -221,294 +174,110 @@ cd terraform/environments/landing-zones/production/orders
 terraform init && terraform apply
 ```
 
-### 5. Explore the Modules
+## Naming Convention
 
-Each module in `terraform/modules/` includes:
-- `main.tf` — Resource definitions
-- `variables.tf` — Input validation and descriptions
-- `outputs.tf` — Exported values
-- `README.md` — Module documentation
-- `examples/basic/main.tf` — Minimal example
-- `examples/complete/main.tf` — Advanced example with all features
+All modules use the same pattern:
 
-## 📋 Module Reference
-
-| Module | Purpose | Key Features |
-|--------|---------|--------------|
-| `azure-container-app` | Serverless containers | Auto-scaling, managed identity, prod guardrail (min_replicas ≥ 2) |
-| `azure-function-app` | Event-driven compute | Y1/EP1 plans, runtime switch, Key Vault refs |
-| `azure-key-vault` | Secrets management | RBAC auth, private endpoint, `for_each` role assignments |
-| `azure-spoke-vnet` | Network topology | 4 subnets via `cidrsubnet()`, NSGs, UDRs, bidirectional peering |
-| `azure-sql-database` | Managed databases | Private endpoint, Entra admin, prod backup guardrail |
-| `azure-static-web-app` | Static content delivery | `azurerm_static_site`, optional custom domain |
-| `azure-budget` | Cost governance | 50%/75% actual + 90% forecast alerts |
-| `azure-secret-rotation` | Automated rotation | Function App + Event Grid `SecretNearExpiry` subscription |
-| `azure-landing-zone` | Team environment | Composes spoke-vnet + budget + policy assignments |
-
-Each module follows these conventions:
-
-### Naming Pattern
-
-`{resource_prefix}-{application_name}-{environment}-{region_short}-{instance_number}`
-
-Example: `ca-orders-prod-uks-01`
-
-**Region short codes:** uksouth=uks, ukwest=ukw, westeurope=weu, northeurope=neu, eastus=eus, eastus2=eus2, westus2=wus2
-
-**Resource prefixes:** ca=Container App, kv=Key Vault, sql=SQL Server, st=Storage Account, func=Function App, appi=Application Insights, log=Log Analytics, vnet=Virtual Network, snet=Subnet, nsg=NSG, pip=Public IP, fw=Firewall, acr=Container Registry, agw=Application Gateway, cae=Container App Environment, id=Managed Identity
-
-### Built-in Guardrails
-
-- **Production environments** must have min_replicas ≥ 2 for high availability
-- **All resources** are automatically tagged with team, cost-centre, environment, and application name
-- **Managed identities** are created automatically for secure Azure-to-Azure authentication
-- **Diagnostic settings** route logs to a centralized Log Analytics workspace
-- **Input validation** ensures resource names, SKUs, and CPU/memory combinations are valid
-
-## 🔄 Pipeline Usage
-
-### Azure DevOps
-
-Reference pipeline templates in your `azure-pipelines.yml`:
-
-```yaml
-trigger:
-  - main
-
-stages:
-  - stage: Validate
-    jobs:
-      - template: pipelines/templates/azure-devops/terraform-validate.yml
-        parameters:
-          terraformVersion: 1.5.7
-          workingDirectory: terraform/modules/azure-container-app
-
-  - stage: Deploy
-    condition: eq(variables['Build.SourceBranch'], 'refs/heads/main')
-    jobs:
-      - template: pipelines/templates/azure-devops/terraform-apply.yml
-        parameters:
-          environmentName: prod
-          workingDirectory: terraform/environments/prod
+```
+{prefix}-{application_name}-{environment}-{region_short}-{instance_number}
 ```
 
-### GitLab CI
+For example: `ca-orders-prod-uks-01`
 
-Include pipeline templates in your `.gitlab-ci.yml`:
+**Region short codes:** `uksouth=uks`, `ukwest=ukw`, `westeurope=weu`, `northeurope=neu`, `eastus=eus`, `eastus2=eus2`, `westus2=wus2`
 
-```yaml
-include:
-  - local: pipelines/templates/gitlab-ci/terraform-validate.yml
-  - local: pipelines/templates/gitlab-ci/terraform-deploy.yml
+**Common prefixes:** `ca` Container App, `kv` Key Vault, `sql` SQL Server, `func` Function App, `vnet` Virtual Network, `snet` Subnet, `id` Managed Identity, `appi` Application Insights
 
-stages:
-  - validate
-  - deploy
-```
+## Running Tests
 
-## 📦 Using Backstage
+The CI pipeline runs four test suites on every pull request and push to main. You can run them locally without any Azure credentials.
 
-The Backstage integration provides:
-
-1. **Service Discovery** — Register all platform components in the Software Catalogue
-2. **Scaffolder Templates** — Generate boilerplate code for new services
-3. **TechDocs** — Searchable documentation site
-4. **Component Relationships** — Dependency mapping and ownership
-
-Add a service to the catalogue:
-
-```yaml
-# catalog-info.yaml
-apiVersion: backstage.io/v1alpha1
-kind: Component
-metadata:
-  name: my-service
-  description: My awesome microservice
-spec:
-  type: service
-  owner: platform-eng
-  lifecycle: production
-```
-
-## 🛡️ Policies & Compliance
-
-### Enforce Organizational Standards
-
-Deploy Azure Policies and OPA rules to ensure:
+**Terraform native tests** (mock provider, no real Azure calls):
 
 ```bash
-# Apply Azure Policy definitions
-cd policies/azure-policy
-terraform apply
-
-# Check OPA compliance
-opa test opa/ -v
+cd terraform/modules/azure-container-app
+terraform init -backend=false
+terraform test
 ```
 
-### Built-in Policy Examples
+**OPA policy tests:**
 
-- ✅ Enforce mandatory tags (team, cost-centre, owner)
-- ✅ Require encryption at rest for storage accounts
-- ✅ Enforce private endpoints for Key Vault
-- ✅ Restrict allowed VM SKUs
-- ✅ Require diagnostic logging for all resources
-- ✅ Enforce SQL Server auditing
+```bash
+opa test policies/opa/ -v
+```
 
-## 📖 Documentation
+**Python compliance tests:**
 
-### Architecture Decision Records (ADRs)
+```bash
+pip install -r scripts/compliance/requirements-test.txt
+pytest scripts/compliance/tests/ -v --cov=scripts/compliance --cov-fail-under=80
+```
 
-Located in `docs/adr/`:
+**React unit tests:**
 
-| ADR | Decision |
-|-----|---------|
-| [001-terraform-over-bicep](docs/adr/001-terraform-over-bicep.md) | Terraform chosen for multi-cloud portability and ecosystem maturity |
-| [002-backstage-for-portal](docs/adr/002-backstage-for-portal.md) | Backstage chosen over Cortex/Port for open source + plugin model |
-| [003-hub-spoke-over-vwan](docs/adr/003-hub-spoke-over-vwan.md) | Hub-and-spoke chosen for deterministic routing and lower cost |
+```bash
+cd golden-paths/react-frontend
+npm install
+npm test
+npm run test:coverage
+```
 
-### On-Boarding Guide
-
-New teams should follow `docs/onboarding/getting-started.md` to:
-
-1. Register their service in Backstage
-2. Create their first resource using a Terraform module
-3. Set up their CI/CD pipeline
-4. Configure alerts and monitoring
-
-### Operational Runbooks
-
-Located in `docs/runbooks/`:
-
-- Disaster recovery procedures
-- Troubleshooting guides
-- Maintenance checklists
-- Incident response playbooks
-
-## 🧪 Testing
-
-### Terraform Tests
-
-Run Terratest integration tests:
+**Terratest integration tests** (require a real Azure subscription):
 
 ```bash
 cd terraform/tests
-go test -v ./...
+go test -v ./... -timeout 30m
 ```
 
-### Policy Tests
+## Module Usage Example
 
-Validate Azure Policies:
+```hcl
+module "orders_api" {
+  source = "../../modules/azure-container-app"
 
-```bash
-cd policies/azure-policy
-terraform validate
+  application_name           = "orders"
+  environment                = "prod"
+  location                   = "uksouth"
+  container_image            = "myregistry.azurecr.io/orders-api:1.2.3"
+  log_analytics_workspace_id = module.connectivity.log_analytics_workspace_id
+
+  team        = "orders-team"
+  cost_centre = "ENG-001"
+
+  min_replicas = 2   # enforced by guardrail in production
+  max_replicas = 10
+}
 ```
 
-Test OPA rules:
+## Architecture Decisions
 
-```bash
-cd policies/opa
-opa test . -v
-```
+The three most consequential design decisions are documented in `docs/adr/`:
 
-### Linting
+- [001 — Terraform over Bicep](docs/adr/001-terraform-over-bicep.md): chosen for multi-cloud portability and ecosystem maturity
+- [002 — Backstage over alternatives](docs/adr/002-backstage-for-portal.md): open source with a strong plugin model
+- [003 — Hub-and-spoke over vWAN](docs/adr/003-hub-spoke-over-vwan.md): deterministic routing, lower cost, easier to reason about
 
-Run all linters on pull requests:
+## Contributing
 
-```bash
-# Format check
-terraform fmt -recursive -check terraform/
+See [CONTRIBUTING.md](CONTRIBUTING.md) for branch naming conventions, the pull request process, Terraform coding standards, and testing requirements.
 
-# Static analysis
-tflint --init
-tflint terraform/
+Before opening a PR:
 
-# Security scan
-checkov -d terraform/
-```
+1. Run `terraform fmt -recursive terraform/` and `terraform validate` on any changed modules
+2. Ensure all unit tests pass locally
+3. Update the module README and examples if you changed inputs or outputs
+4. Reference any related issue in the PR description
 
-## 🤝 Contributing
+## Platform Contract
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for:
+[PLATFORM-CONTRACT.md](PLATFORM-CONTRACT.md) documents the current module versions, supported environment names and locations, required tagging schema, and pipeline template compatibility. Update it when making breaking changes.
 
-- Branch naming conventions
-- Pull request process
-- Code review expectations
-- Terraform coding standards
-- Testing requirements
+## License
 
-### Quick Contribution Checklist
+MIT. See [LICENSE](LICENSE) for details.
 
-- [ ] Create an issue before starting work
-- [ ] Follow branch naming: `feature/`, `bugfix/`, `docs/`
-- [ ] Run `terraform fmt -recursive` and `terraform validate`
-- [ ] Update documentation and README
-- [ ] Add examples to new modules
-- [ ] Run all tests locally
-- [ ] Reference the issue in your pull request
+## About
 
-## 📋 Platform Contract
+Built by [Abhishek Bagde](https://github.com/abhishekbagde) — cloud architect and platform engineer with a focus on Azure, infrastructure automation, and developer experience.
 
-The `PLATFORM-CONTRACT.md` file documents:
-
-- Minimum and maximum Terraform module versions
-- Supported environment names and locations
-- Required tagging schema
-- Pipeline template compatibility matrix
-
-Keep this file up-to-date as the platform evolves.
-
-## 📝 Changelog
-
-See [CHANGELOG.md](CHANGELOG.md) for release notes, features, and bug fixes.
-
-Current stable release: **v0.1.0**
-
-## 🎓 For Book Readers
-
-This repository is the **hands-on companion** to "Platform Engineering on Azure":
-
-- Each chapter corresponds to modules and patterns in this repository
-- Code examples throughout the book reference specific files and directories
-- Practical exercises build upon these reusable templates
-- Real-world patterns and guardrails are production-tested
-
-**Get the book:** Available at major online retailers. Includes detailed explanations of:
-
-- Platform engineering principles and team structures
-- Infrastructure as Code best practices
-- Cloud-native architecture patterns
-- CI/CD pipeline design
-- Policy as Code and compliance
-- Cost governance and FinOps
-- Team enablement and golden paths
-
-## 🔗 Resources
-
-- [Microsoft Azure Documentation](https://docs.microsoft.com/azure)
-- [Terraform Azure Provider](https://registry.terraform.io/providers/hashicorp/azurerm/latest)
-- [Backstage.io](https://backstage.io)
-- [Open Policy Agent](https://www.openpolicyagent.org)
-- [Azure DevOps](https://dev.azure.com)
-- [GitLab CI/CD](https://docs.gitlab.com/ee/ci/)
-
-## 📄 License
-
-This repository is licensed under the **MIT License**. See [LICENSE](LICENSE) for details.
-
-## 👥 Community & Support
-
-- **GitHub Issues** — Report bugs or request features
-- **Pull Requests** — Contribute improvements and bug fixes
-- **Discussions** — Ask questions and share ideas
-- **Code of Conduct** — See [CONTRIBUTING.md](CONTRIBUTING.md)
-
-## 🙋 About the Author
-
-**Abhishek Bagde** is a senior software engineer and cloud architect specializing in Azure, infrastructure automation, and internal developer platforms. This repository represents best practices learned from implementing platforms at scale in enterprise organizations.
-
----
-
-**Star ⭐ this repository if you find it useful, and follow for updates!**
-
-Made with ❤️ for the platform engineering community.
+Issues and pull requests are welcome.
