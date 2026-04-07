@@ -134,15 +134,8 @@ def test_main_exits_0_when_all_compliant(tmp_path):
         mock_client.policy_states.list_query_results_for_subscription.return_value = mock_states
         mock_client_cls.return_value = mock_client
 
-        with pytest.raises(SystemExit):
-            sys.argv = ["script", "--subscription-id", "sub-id", "--output", str(output_file)]
-            try:
-                ger.main()
-                exit_code = 0
-            except SystemExit as e:
-                exit_code = e.code
-
-        assert exit_code == 0
+        sys.argv = ["script", "--subscription-id", "sub-id", "--output", str(output_file)]
+        ger.main()  # should return normally (no sys.exit) when all compliant
 
 
 def test_report_written_to_file(tmp_path):

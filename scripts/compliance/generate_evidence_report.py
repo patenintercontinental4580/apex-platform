@@ -1,6 +1,8 @@
-# Thin re-export shim so pytest can import generate-evidence-report.py
-# The real module is generate-evidence-report.py
-import importlib.util, pathlib
+# Shim so pytest can import generate-evidence-report.py (hyphenated filename).
+# Replaces itself in sys.modules with the real module so that
+# patch("generate_evidence_report.PolicyInsightsClient") targets
+# the same namespace that main() reads from.
+import importlib.util, pathlib, sys as _sys
 
 _spec = importlib.util.spec_from_file_location(
     "generate_evidence_report",
@@ -8,10 +10,4 @@ _spec = importlib.util.spec_from_file_location(
 )
 _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
-
-from generate_evidence_report import *  # noqa: F401,F403
-build_summary = _mod.build_summary
-get_policy_states = _mod.get_policy_states
-main = _mod.main
-DefaultAzureCredential = _mod.DefaultAzureCredential
-PolicyInsightsClient = _mod.PolicyInsightsClient
+_sys.modules[__name__] = _mod
