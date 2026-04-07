@@ -1,0 +1,67 @@
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfplan
+tfplan
+terraform.tfstate
+terraform.tfstate.backup
+*.tfstate
+*.tfstate.*
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# .NET build artefacts
+**/obj/
+**/bin/
+*.user
+*.suo
+.vs/
+*.nupkg
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+
+# Node / React
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+coverage/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Secrets / credentials
+*.pem
+*.key
+*.p12
+*.pfx
+service-account.json
+credentials.json
