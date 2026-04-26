@@ -1,0 +1,77 @@
+# Apex Platform — Shared Pipeline Variable Defaults
+#
+# This file defines platform-wide default variables used across all Azure DevOps
+# pipelines. Reference it as a variable group in azure-pipelines.yml:
+#
+#   variables:
+#     - template: pipelines/shared/variables/platform-defaults.yml@platform-templates
+#
+# Values marked (override) should be overridden per-environment in the pipeline
+# that extends this template.
+
+variables:
+  # ---------------------------------------------------------------------------
+  # Container Registry
+  # ---------------------------------------------------------------------------
+
+  # The Azure Container Registry used for all platform workloads.
+  containerRegistryName: 'acrapexplatformuks01'
+  containerRegistryLoginServer: 'acrapexplatformuks01.azurecr.io'
+
+  # Azure DevOps service connection for the ACR (used in Docker tasks).
+  containerRegistryServiceConnection: 'sc-acr-apex-platform'
+
+  # ---------------------------------------------------------------------------
+  # Log Analytics
+  # ---------------------------------------------------------------------------
+
+  # Shared Log Analytics workspace provisioned in the connectivity environment.
+  logAnalyticsWorkspaceId: '/subscriptions/$(subscriptionId)/resourceGroups/rg-apex-connectivity/providers/Microsoft.OperationalInsights/workspaces/log-apex-platform-uks-01'
+
+  # ---------------------------------------------------------------------------
+  # Azure Subscriptions (per environment)
+  # Extend or override these in environment-specific pipelines.
+  # ---------------------------------------------------------------------------
+
+  # Azure DevOps service connection for the development subscription.
+  azureSubscriptionDev: 'sc-apex-platform-dev'
+
+  # Azure DevOps service connection for the staging subscription.
+  azureSubscriptionStaging: 'sc-apex-platform-staging'
+
+  # Azure DevOps service connection for the production subscription.
+  azureSubscriptionProd: 'sc-apex-platform-prod'
+
+  # ---------------------------------------------------------------------------
+  # Terraform State Backend
+  # ---------------------------------------------------------------------------
+
+  # Resource group that holds the Terraform remote state storage account.
+  terraformStateResourceGroup: 'rg-apex-platform-tfstate-uks'
+
+  # Storage account used for all Terraform remote state.
+  terraformStateStorageAccount: 'stapexplatformtfstate'
+
+  # Blob container within the storage account.
+  terraformStateContainer: 'tfstate'
+
+  # Terraform version pinned across all platform pipelines.
+  terraformVersion: '1.7.0'
+
+  # ---------------------------------------------------------------------------
+  # Default Resource Tags
+  # Applied to all infrastructure provisioned through platform pipelines.
+  # Individual pipelines must supply ManagedBy, Application, and CostCentre.
+  # ---------------------------------------------------------------------------
+
+  tagManagedBy: 'apex-platform'
+  tagRepository: '$(Build.Repository.Name)'
+  tagPipeline: '$(System.DefinitionName)'
+
+  # ---------------------------------------------------------------------------
+  # Notifications
+  # ---------------------------------------------------------------------------
+
+  # Microsoft Teams incoming webhook for platform-wide alerts.
+  # Override with a team-specific webhook when extending this template.
+  teamsWebhookUrl: ''
