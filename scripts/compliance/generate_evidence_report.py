@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-generate-evidence-report.py — Generate a compliance evidence report from Azure Policy.
+generate_evidence_report.py — Generate a compliance evidence report from Azure Policy.
 
 Usage:
-    python3 scripts/compliance/generate-evidence-report.py \
+    python3 scripts/compliance/generate_evidence_report.py \
         --subscription-id <id> \
         --output report.json
 """

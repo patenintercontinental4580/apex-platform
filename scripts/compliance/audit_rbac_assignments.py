@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-audit-rbac-assignments.py — Audit Azure RBAC assignments and flag direct User assignments.
+audit_rbac_assignments.py — Audit Azure RBAC assignments and flag direct User assignments.
 
 Usage:
-    python3 scripts/compliance/audit-rbac-assignments.py \
+    python3 scripts/compliance/audit_rbac_assignments.py \
         --subscription-id <id> \
         [--output report.json]
 """
