@@ -1,0 +1,205 @@
+# Apex Platform: Azure DevOps — Terraform Lint Pipeline Template
+#
+# Reusable lint pipeline that runs terraform fmt, validate, tflint, checkov,
+# and SonarQube on every pull request or push touching Terraform files.
+# Used by both module repositories and environment configuration repositories.
+#
+# Usage: extend from a team's azure-pipelines.yml:
+#
+#   resources:
+#     repositories:
+#       - repository: platform-templates
+#         type: git
+#         name: apex-platform/apex-platform
+#   extends:
+#     template: pipelines/templates/azure-devops/terraform-lint.yml@platform-templates
+#     parameters:
+#       azureSubscription: sc-apex-platform-dev
+#       workingDirectory: terraform/modules/azure-container-app
+
+parameters:
+  - name: workingDirectory
+    type: string
+    default: '.'
+  - name: azureSubscription
+    type: string
+  - name: terraformVersion
+    type: string
+    default: '1.7.0'
+  - name: tflintVersion
+    type: string
+    default: '0.50.3'
+  - name: checkovSoftFail
+    type: boolean
+    default: false
+  - name: sonarQubeServiceConnection
+    type: string
+    default: ''
+  - name: sonarQubeProjectKey
+    type: string
+    default: ''
+
+trigger:
+  paths:
+    include:
+      - '**/*.tf'
+      - '**/*.tfvars'
+
+pr:
+  paths:
+    include:
+      - '**/*.tf'
+      - '**/*.tfvars'
+
+jobs:
+  - job: TerraformLint
+    displayName: 'Terraform Lint — ${{ parameters.workingDirectory }}'
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+      - checkout: self
+        fetchDepth: 0
+
+      - task: TerraformInstaller@1
+        displayName: 'Install Terraform ${{ parameters.terraformVersion }}'
+        inputs:
+          terraformVersion: ${{ parameters.terraformVersion }}
+
+      - script: |
+          curl -L \
+            "https://github.com/terraform-linters/tflint/releases/download/v${{ parameters.tflintVersion }}/tflint_linux_amd64.zip" \
+            -o tflint.zip
+          unzip -o tflint.zip -d /usr/local/bin/
+          rm tflint.zip
+          tflint --version
+        displayName: 'Install tflint ${{ parameters.tflintVersion }}'
+
+      - script: pip install checkov --quiet
+        displayName: 'Install Checkov'
+
+      # -----------------------------------------------------------------------
+      - script: |
+          echo "=== terraform fmt check ==="
+          find ${{ parameters.workingDirectory }} -name "*.tf" -not -path "*/.terraform/*" | head -1 | xargs -I{} dirname {} | sort -u | while read -r dir; do
+            terraform fmt -check -recursive "$dir" || {
+              echo "##[error]terraform fmt check failed in: $dir"
+              echo "Run 'terraform fmt -recursive $dir' locally to fix formatting."
+              exit 1
+            }
+          done
+          echo "terraform fmt check passed."
+        displayName: 'terraform fmt'
+
+      # -----------------------------------------------------------------------
+      - task: AzureCLI@2
+        displayName: 'terraform validate'
+        inputs:
+          azureSubscription: ${{ parameters.azureSubscription }}
+          scriptType: bash
+          scriptLocation: inlineScript
+          addSpnToEnvironment: true
+          inlineScript: |
+            set -euo pipefail
+            export ARM_CLIENT_ID=$servicePrincipalId
+            export ARM_CLIENT_SECRET=$servicePrincipalKey
+            export ARM_TENANT_ID=$tenantId
+            export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+
+            # Find all Terraform root modules (directories with *.tf files, excluding examples/.terraform)
+            find ${{ parameters.workingDirectory }} \
+              -name "*.tf" \
+              -not -path "*/.terraform/*" \
+              -not -path "*/examples/*" \
+              | xargs -I{} dirname {} | sort -u | while read -r dir; do
+                echo "--- Validating: $dir ---"
+                terraform -chdir="$dir" init -backend=false -input=false -no-color
+                terraform -chdir="$dir" validate -no-color
+                echo "Validated: $dir"
+            done
+            echo "All modules validated successfully."
+
+      # -----------------------------------------------------------------------
+      - script: |
+          echo "=== tflint ==="
+          tflint --init --config "$(Build.SourcesDirectory)/.tflint.hcl" 2>/dev/null || tflint --init
+
+          find ${{ parameters.workingDirectory }} \
+            -name "*.tf" \
+            -not -path "*/.terraform/*" \
+            -not -path "*/examples/*" \
+            | xargs -I{} dirname {} | sort -u | while read -r dir; do
+              echo "--- tflint: $dir ---"
+              tflint --chdir="$dir" --format compact
+          done
+          echo "tflint passed."
+        displayName: 'tflint'
+
+      # -----------------------------------------------------------------------
+      - script: |
+          echo "=== Checkov security scan ==="
+          SOFT_FAIL_FLAG=""
+          if [[ "${{ parameters.checkovSoftFail }}" == "True" ]]; then
+            SOFT_FAIL_FLAG="--soft-fail"
+          fi
+
+          checkov \
+            --directory ${{ parameters.workingDirectory }} \
+            --framework terraform \
+            --quiet \
+            --compact \
+            --output cli \
+            --output junitxml \
+            --output-file-path /tmp/checkov-results.xml \
+            $SOFT_FAIL_FLAG
+
+          echo "Checkov scan complete."
+        displayName: 'Checkov security scan'
+
+      - task: PublishTestResults@2
+        displayName: 'Publish Checkov results'
+        condition: always()
+        inputs:
+          testResultsFormat: JUnit
+          testResultsFiles: '/tmp/checkov-results.xml'
+          testRunTitle: 'Checkov — ${{ parameters.workingDirectory }}'
+          failTaskOnFailedTests: true
+
+      # -----------------------------------------------------------------------
+      - ${{ if ne(parameters.sonarQubeServiceConnection, '') }}:
+        - task: SonarQubePrepare@5
+          displayName: 'SonarQube — Prepare'
+          inputs:
+            SonarQube: ${{ parameters.sonarQubeServiceConnection }}
+            scannerMode: CLI
+            configMode: manual
+            cliProjectKey: ${{ parameters.sonarQubeProjectKey }}
+            cliProjectName: ${{ parameters.sonarQubeProjectKey }}
+            extraProperties: |
+              sonar.sources=${{ parameters.workingDirectory }}
+              sonar.inclusions=**/*.tf
+              sonar.exclusions=**/.terraform/**,**/examples/**
+
+        - task: SonarQubeAnalyze@5
+          displayName: 'SonarQube — Analyse'
+
+        - task: SonarQubePublish@5
+          displayName: 'SonarQube — Publish Quality Gate Result'
+          inputs:
+            pollingTimeoutSec: '300'
+
+      # -----------------------------------------------------------------------
+      - script: |
+          echo ""
+          echo "=============================="
+          echo " Terraform lint summary"
+          echo "=============================="
+          echo "  ✓ terraform fmt"
+          echo "  ✓ terraform validate"
+          echo "  ✓ tflint"
+          echo "  ✓ Checkov"
+          ${{ if ne(parameters.sonarQubeServiceConnection, '') }}:
+            echo "  ✓ SonarQube"
+          echo "=============================="
+          echo "All lint checks passed."
+        displayName: 'Lint summary'
+        condition: succeeded()

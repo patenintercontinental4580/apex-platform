@@ -1,0 +1,87 @@
+# Apex Platform — Compliance Threshold Variables
+#
+# This file defines platform-wide compliance and quality gate thresholds.
+# Reference it alongside platform-defaults.yml in azure-pipelines.yml:
+#
+#   variables:
+#     - template: pipelines/shared/variables/platform-defaults.yml@platform-templates
+#     - template: pipelines/shared/variables/compliance-thresholds.yml@platform-templates
+#
+# These thresholds are enforced in the Scan and lint stages of every
+# platform pipeline template. Any pipeline that extends a platform template
+# inherits these gates automatically.
+
+variables:
+  # ---------------------------------------------------------------------------
+  # Test Coverage
+  # ---------------------------------------------------------------------------
+
+  # Minimum line coverage percentage required for a build to pass.
+  # Pipelines must fail if coverage drops below this threshold.
+  minimumTestCoveragePercent: '80'
+
+  # ---------------------------------------------------------------------------
+  # Security Scanning — Container Images (Trivy)
+  # ---------------------------------------------------------------------------
+
+  # Maximum number of CRITICAL severity vulnerabilities allowed in a container
+  # image before the pipeline fails. Set to 0 to enforce a zero-tolerance policy.
+  maxCriticalVulnerabilities: '0'
+
+  # Maximum number of HIGH severity vulnerabilities allowed.
+  maxHighVulnerabilities: '0'
+
+  # Trivy exit code when vulnerabilities exceed the threshold (1 = fail).
+  trivyExitCode: '1'
+
+  # Trivy severity levels to scan for. UNKNOWN and MEDIUM are reported but
+  # do not fail the pipeline unless explicitly added here.
+  trivySeverity: 'CRITICAL,HIGH'
+
+  # ---------------------------------------------------------------------------
+  # Security Scanning — Static Analysis (Checkov / SonarQube)
+  # ---------------------------------------------------------------------------
+
+  # Checkov: minimum pass rate (%) for Terraform security checks.
+  # A value of 100 means no failures are accepted (except explicitly skipped checks).
+  checkovMinPassRate: '100'
+
+  # SonarQube quality gate: the pipeline fails if the quality gate status is not PASSED.
+  sonarQualityGateEnforced: 'true'
+
+  # ---------------------------------------------------------------------------
+  # Secret Scanning (Gitleaks / Azure DevOps Secret Detection)
+  # ---------------------------------------------------------------------------
+
+  # Fail the pipeline if any secrets are detected in the source code.
+  secretScanFailOnDetection: 'true'
+
+  # ---------------------------------------------------------------------------
+  # Required Scan Tools
+  # The following tools MUST run in the Scan stage of every application pipeline.
+  # Removing any of these from a pipeline template is a policy violation.
+  # ---------------------------------------------------------------------------
+
+  # Comma-separated list of required scan tools for application pipelines.
+  requiredScanToolsApp: 'trivy,sonarqube,dependency-check'
+
+  # Comma-separated list of required scan tools for Terraform pipelines.
+  requiredScanToolsTerraform: 'checkov,tflint,sonarqube'
+
+  # ---------------------------------------------------------------------------
+  # Dependency Scanning (OWASP Dependency-Check)
+  # ---------------------------------------------------------------------------
+
+  # CVSS score threshold above which a dependency vulnerability fails the build.
+  # 7.0 = HIGH, 9.0 = CRITICAL. Set to 7.0 for HIGH-and-above enforcement.
+  dependencyCheckFailBuildOnCvss: '7.0'
+
+  # ---------------------------------------------------------------------------
+  # Canary Deployment Thresholds (used by dotnet-microservice and python-api)
+  # ---------------------------------------------------------------------------
+
+  # Error rate percentage above which a canary deployment is automatically rolled back.
+  canaryMaxErrorRatePercent: '1'
+
+  # Observation window (in minutes) at each canary weight before promoting.
+  canaryObservationWindowMinutes: '5'
